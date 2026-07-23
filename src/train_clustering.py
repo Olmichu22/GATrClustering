@@ -26,8 +26,33 @@ from .augment import hit_dropout
 from .data.dataset import make_clustering_splits
 from .losses.swap_loss import swap_loss
 from .losses.vicreg import vicreg_loss
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+
 from .models.clustering_model import ClusteringModel
 from .plots import plot_latent_pca
+
+
+def setup_wandb(cfg: dict):
+    """Init W&B if enabled (config train.wandb); returns the module or None."""
+    wcfg = cfg["train"].get("wandb", {}) or {}
+    if not wcfg.get("enabled", False):
+        return None
+    try:
+        import wandb
+    except ImportError:
+        print("[wandb] not installed; skipping")
+        return None
+    wandb.init(
+        project=wcfg.get("project", "gatr-clustering"),
+        entity=wcfg.get("entity"),
+        name=wcfg.get("name"),
+        mode=wcfg.get("mode", "online"),
+        config=cfg,
+    )
+    return wandb
 
 
 def load_config(path: str) -> dict:
@@ -79,6 +104,10 @@ def train(cfg: dict):
     model = ClusteringModel(cfg["model"], cfg["features"]).to(device)
     init_prototypes(model, train_loader, device)
 
+    wb = setup_wandb(cfg)
+    if wb is not None:
+        wb.log({"model/params": sum(p.numel() for p in model.parameters())})
+
     opt = torch.optim.AdamW(
         model.parameters(), lr=tcfg["lr"], weight_decay=tcfg.get("weight_decay", 1e-4)
     )
@@ -123,10 +152,17 @@ def train(cfg: dict):
         sched.step()
 
         n = max(agg["n"], 1)
+        lr_now = sched.get_last_lr()[0]
         print(
             f"[epoch {epoch:03d}] loss={agg['loss']/n:.4f} "
             f"swap={agg['swap']/n:.4f} ce={agg['ce']/n:.4f} vic={agg['vic']/n:.4f}"
         )
+        if wb is not None:
+            wb.log({
+                "loss/total": agg["loss"] / n, "loss/swap": agg["swap"] / n,
+                "loss/ce": agg["ce"] / n, "loss/vic": agg["vic"] / n,
+                "lr": lr_now, "epoch": epoch,
+            })
 
         if (epoch + 1) % tcfg.get("plot_every", 5) == 0 or epoch + 1 == tcfg["epochs"]:
             torch.save(
@@ -138,15 +174,23 @@ def train(cfg: dict):
             )
             # held-out anchor accuracy (val-split anchors never entered CE / proto init)
             amask = anchor >= 0
+            acc = float((cluster[amask] == anchor[amask]).mean()) if amask.any() else float("nan")
             if amask.any():
-                acc = float((cluster[amask] == anchor[amask]).mean())
                 print(f"           val held-out anchor acc={acc:.3f} ({int(amask.sum())} anchors)")
             proto = model.head.prototypes.detach().cpu().numpy()
-            plot_latent_pca(
+            fig = plot_latent_pca(
                 z, cluster, anchor, proto, epoch,
                 os.path.join(tcfg["out_dir"], "pca", f"epoch_{epoch:03d}.png"),
             )
+            if wb is not None:
+                log = {"latent/pca": wb.Image(fig), "epoch": epoch}
+                if amask.any():
+                    log["val/heldout_anchor_acc"] = acc
+                wb.log(log)
+            plt.close(fig)
 
+    if wb is not None:
+        wb.finish()
     print(f"[done] checkpoint at {os.path.join(tcfg['out_dir'], 'last.ckpt')}")
 
 
@@ -178,6 +222,13 @@ def main():
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--out_dir", default=None)
     ap.add_argument("--device", default=None)
+    ap.add_argument("--wandb", dest="wandb", action="store_true", default=None,
+                    help="enable W&B logging (overrides config)")
+    ap.add_argument("--no_wandb", dest="wandb", action="store_false",
+                    help="disable W&B logging (overrides config)")
+    ap.add_argument("--wandb_project", default=None)
+    ap.add_argument("--wandb_mode", default=None, help="online | offline | disabled")
+    ap.add_argument("--run_name", default=None)
     args = ap.parse_args()
 
     cfg = load_config(args.cfg)
@@ -189,6 +240,16 @@ def main():
         cfg["train"]["out_dir"] = args.out_dir
     if args.device:
         cfg["train"]["device"] = args.device
+
+    cfg["train"].setdefault("wandb", {})
+    if args.wandb is not None:
+        cfg["train"]["wandb"]["enabled"] = args.wandb
+    if args.wandb_project:
+        cfg["train"]["wandb"]["project"] = args.wandb_project
+    if args.wandb_mode:
+        cfg["train"]["wandb"]["mode"] = args.wandb_mode
+    if args.run_name:
+        cfg["train"]["wandb"]["name"] = args.run_name
     train(cfg)
 
 

@@ -27,6 +27,9 @@ def plot_latent_pca(z, cluster, anchor, prototypes, epoch, out_path, title=None)
     cluster    : (M,)     assigned cluster per event (argmax logits)
     anchor     : (M,)     anchor class per event (-1 = not an anchor)
     prototypes : (K, d)   current prototype vectors (any norm)
+
+    Saves the figure to ``out_path`` and RETURNS it (not closed) so callers can
+    also log it (e.g. wandb.Image). Remember to ``plt.close(fig)`` afterwards.
     """
     from sklearn.decomposition import PCA
 
@@ -66,4 +69,4 @@ def plot_latent_pca(z, cluster, anchor, prototypes, epoch, out_path, title=None)
     ax.legend(loc="best", fontsize=8)
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
-    plt.close(fig)
+    return fig

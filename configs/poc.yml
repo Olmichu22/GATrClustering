@@ -102,3 +102,11 @@ train:
   out_dir: results/poc_run1
   plot_every: 5           # every N epochs: checkpoint + latent-PCA plot (anchors marked)
   plot_max_events: 3000   # cap events used for the training-time PCA plot
+  # ----- Weights & Biases logging (like GATrAutoencoder) -----
+  wandb:
+    enabled: true
+    project: gatr-clustering
+    entity: null          # null -> your default W&B entity
+    name: null            # run name; null -> W&B auto-generated
+    mode: online          # online | offline | disabled
+

@@ -41,7 +41,8 @@ via `data.field_map` in the config. Anchors are a per-event field
 apptainer exec --nv -B /nfs/cms/arqolmo/GPU_train/mlpf/extlib \
   -B /nfs:/nfs --pwd "$PWD" /nfs/cms/arqolmo/GPU_train/mlpf/gatr_v9.sif bash
 
-# train
+# train  (W&B on by default; logs losses, lr, held-out anchor acc, latent PCA)
+export WANDB_API_KEY=...        # or:  --wandb_mode offline  /  --no_wandb
 python -m src.train_clustering --cfg configs/poc.yml --data_path /path/to/dataset.h5
 
 # evaluate

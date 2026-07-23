@@ -143,8 +143,9 @@ def evaluate(cfg, ckpt_path, out_dir, device_str):
     plot_nhits_by_cluster(nhits, cluster, K, os.path.join(out_dir, "nhits_by_cluster.png"))
     plot_tsne(z, cluster, anchor, os.path.join(out_dir, "tsne_z.png"))
     proto = model.head.prototypes.detach().cpu().numpy()
-    plot_latent_pca(z, cluster, anchor, proto, state.get("epoch", -1),
-                    os.path.join(out_dir, "pca_z.png"))
+    fig = plot_latent_pca(z, cluster, anchor, proto, state.get("epoch", -1),
+                          os.path.join(out_dir, "pca_z.png"))
+    plt.close(fig)
 
 
 def main():
