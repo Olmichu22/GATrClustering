@@ -27,6 +27,7 @@ from .data.dataset import make_clustering_splits
 from .losses.swap_loss import swap_loss
 from .losses.vicreg import vicreg_loss
 from .models.clustering_model import ClusteringModel
+from .plots import plot_latent_pca
 
 
 def load_config(path: str) -> dict:
@@ -73,6 +74,7 @@ def train(cfg: dict):
         train_ds, batch_size=tcfg["batch_size"], shuffle=True,
         num_workers=tcfg.get("num_workers", 4),
     )
+    val_loader = DataLoader(val_ds, batch_size=tcfg["batch_size"], shuffle=False)
 
     model = ClusteringModel(cfg["model"], cfg["features"]).to(device)
     init_prototypes(model, train_loader, device)
@@ -131,8 +133,42 @@ def train(cfg: dict):
                 {"model": model.state_dict(), "cfg": cfg, "epoch": epoch},
                 os.path.join(tcfg["out_dir"], "last.ckpt"),
             )
+            z, cluster, anchor = collect_latent(
+                model, val_loader, device, max_events=tcfg.get("plot_max_events", 3000)
+            )
+            # held-out anchor accuracy (val-split anchors never entered CE / proto init)
+            amask = anchor >= 0
+            if amask.any():
+                acc = float((cluster[amask] == anchor[amask]).mean())
+                print(f"           val held-out anchor acc={acc:.3f} ({int(amask.sum())} anchors)")
+            proto = model.head.prototypes.detach().cpu().numpy()
+            plot_latent_pca(
+                z, cluster, anchor, proto, epoch,
+                os.path.join(tcfg["out_dir"], "pca", f"epoch_{epoch:03d}.png"),
+            )
 
     print(f"[done] checkpoint at {os.path.join(tcfg['out_dir'], 'last.ckpt')}")
+
+
+@torch.no_grad()
+def collect_latent(model, loader, device, max_events=3000):
+    """Collect z, assigned cluster and anchor label over (a capped subset of) a loader."""
+    was_training = model.training
+    model.eval()
+    Z, CL, AN, seen = [], [], [], 0
+    for batch in loader:
+        batch = batch.to(device)
+        out = model(batch)
+        Z.append(out["z"].cpu().numpy())
+        CL.append(out["logits"].argmax(1).cpu().numpy())
+        AN.append(batch.anchor_label.cpu().numpy())
+        seen += out["z"].shape[0]
+        if seen >= max_events:
+            break
+    if was_training:
+        model.train()
+    import numpy as np
+    return np.concatenate(Z), np.concatenate(CL), np.concatenate(AN)
 
 
 def main():

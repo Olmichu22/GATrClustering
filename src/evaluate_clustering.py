@@ -1,14 +1,21 @@
 """
-Evaluation for the clustering POC. With almost no real labels available, the
-PRIMARY diagnostic is the nHits(total) distribution split by assigned cluster
-(e/pi/mu separate well in hit count). Secondary checks use the few labels.
+Evaluation for the clustering POC.
 
-Produces (saved to ``out_dir``):
-    1. Anchor sanity: accuracy of anchors vs their prototypes.
-    2. nHits(total) distribution colored by assigned cluster  (PRIMARY).
-    3. t-SNE of z colored by cluster (and by class_label where available).
-    4. Confusion matrix on the few labeled non-anchor events (Hungarian-aligned).
-    5. Where 'extra'/unlabeled events fall across clusters.
+IMPORTANT: there is NO trustworthy ground truth. ``particle_type`` is just another
+noisy classifier, so no confusion matrix is computed. Validation uses only:
+
+  Anchor-based (held-out):
+    Anchors that landed in the validation split never entered the anchor CE term
+    nor the prototype initialization (both run over the train split only), so
+    they form a genuine held-out set. We report their classification accuracy
+    against the learned prototypes.
+
+  Unsupervised:
+    1. nHits(total) distribution split by assigned cluster (PRIMARY -- e/pi/mu
+       separate in hit count).
+    2. Silhouette score of z w.r.t. the assigned clusters (separation).
+    3. Cluster occupancy (are clusters used, or collapsed?).
+    4. t-SNE of z colored by assigned cluster, anchors highlighted.
 """
 
 from __future__ import annotations
@@ -28,36 +35,51 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from .data.dataset import make_clustering_splits  # noqa: E402
 from .models.clustering_model import ClusteringModel  # noqa: E402
+from .plots import plot_latent_pca  # noqa: E402
 
 
 @torch.no_grad()
 def collect(model, loader, device):
     model.eval()
-    Z, cl, anc, lab, nh = [], [], [], [], []
+    Z, cl, anc, nh = [], [], [], []
     for batch in loader:
         batch = batch.to(device)
         out = model(batch)
         Z.append(out["z"].cpu().numpy())
         cl.append(out["logits"].argmax(1).cpu().numpy())
         anc.append(batch.anchor_label.cpu().numpy())
-        lab.append(batch.class_label.cpu().numpy())
         nh.append(batch.nhits_total.cpu().numpy())
-    return (
-        np.concatenate(Z),
-        np.concatenate(cl),
-        np.concatenate(anc),
-        np.concatenate(lab),
-        np.concatenate(nh),
-    )
+    return (np.concatenate(Z), np.concatenate(cl), np.concatenate(anc),
+            np.concatenate(nh).reshape(-1))
 
 
-def anchor_sanity(cluster, anchor):
+def heldout_anchor_accuracy(cluster, anchor):
+    """Accuracy on validation-split anchors (held out from CE + prototype init)."""
     mask = anchor >= 0
     if not mask.any():
-        print("[eval] no anchors present")
+        print("[eval] no held-out anchors in the validation split")
         return
     acc = float((cluster[mask] == anchor[mask]).mean())
-    print(f"[eval] anchor sanity accuracy: {acc:.3f} ({int(mask.sum())} anchors)")
+    print(f"[eval] held-out anchor accuracy: {acc:.3f} on {int(mask.sum())} val anchors")
+
+
+def silhouette(z, cluster, max_pts=3000):
+    from sklearn.metrics import silhouette_score
+
+    K = len(np.unique(cluster))
+    if K < 2 or z.shape[0] <= K:
+        print(f"[eval] silhouette skipped (clusters used = {K})")
+        return
+    n = z.shape[0]
+    idx = np.random.default_rng(0).choice(n, size=min(n, max_pts), replace=False)
+    s = silhouette_score(z[idx], cluster[idx])
+    print(f"[eval] silhouette score (z vs assigned cluster): {s:.3f}")
+
+
+def cluster_occupancy(cluster, K):
+    occ = np.bincount(cluster, minlength=K)
+    frac = occ / max(occ.sum(), 1)
+    print(f"[eval] cluster occupancy: {occ.tolist()}  (fractions {np.round(frac,3).tolist()})")
 
 
 def plot_nhits_by_cluster(nhits, cluster, K, out_path):
@@ -77,57 +99,22 @@ def plot_nhits_by_cluster(nhits, cluster, K, out_path):
     print(f"[eval] wrote {out_path}")
 
 
-def plot_tsne(z, cluster, label, out_path, max_pts=4000):
+def plot_tsne(z, cluster, anchor, out_path, max_pts=4000):
     from sklearn.manifold import TSNE
 
     n = z.shape[0]
     idx = np.random.default_rng(0).choice(n, size=min(n, max_pts), replace=False)
     emb = TSNE(n_components=2, init="pca", perplexity=30).fit_transform(z[idx])
+    cl, an = cluster[idx], anchor[idx]
 
-    has_label = (label[idx] >= 0).any()
-    fig, axes = plt.subplots(1, 2 if has_label else 1, figsize=(12 if has_label else 6, 5), squeeze=False)
-    axes[0][0].scatter(emb[:, 0], emb[:, 1], c=cluster[idx], s=6, cmap="tab10")
-    axes[0][0].set_title("t-SNE of z (color = assigned cluster)")
-    if has_label:
-        lab = label[idx]
-        m = lab >= 0
-        axes[0][1].scatter(emb[m, 0], emb[m, 1], c=lab[m], s=8, cmap="tab10")
-        axes[0][1].set_title("t-SNE of z (color = true class, where known)")
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=120)
-    plt.close(fig)
-    print(f"[eval] wrote {out_path}")
-
-
-def confusion_labeled(cluster, anchor, label, K, out_path):
-    """Confusion on labeled NON-anchor events, Hungarian cluster<->class aligned."""
-    from scipy.optimize import linear_sum_assignment
-
-    mask = (label >= 0) & (anchor < 0)
-    if not mask.any():
-        print("[eval] no labeled non-anchor events for confusion matrix")
-        return
-    cl, la = cluster[mask], label[mask]
-    classes = np.unique(la)
-    C = np.zeros((K, len(classes)), dtype=int)
-    for i, k in enumerate(range(K)):
-        for j, c in enumerate(classes):
-            C[i, j] = int(((cl == k) & (la == c)).sum())
-    row, col = linear_sum_assignment(-C)
-    acc = C[row, col].sum() / C.sum()
-    print(f"[eval] labeled non-anchor accuracy (Hungarian): {acc:.3f} on {int(mask.sum())} events")
-
-    fig, ax = plt.subplots(figsize=(5, 4))
-    im = ax.imshow(C, cmap="Blues")
-    ax.set_xticks(range(len(classes)))
-    ax.set_xticklabels([f"class {c}" for c in classes])
-    ax.set_yticks(range(K))
-    ax.set_yticklabels([f"cluster {k}" for k in range(K)])
-    for i in range(K):
-        for j in range(len(classes)):
-            ax.text(j, i, C[i, j], ha="center", va="center")
-    fig.colorbar(im)
-    ax.set_title(f"confusion (labeled non-anchor), acc={acc:.2f}")
+    fig, ax = plt.subplots(figsize=(6.5, 5.5))
+    ax.scatter(emb[:, 0], emb[:, 1], c=cl, s=6, cmap="tab10", alpha=0.4, linewidths=0)
+    am = an >= 0
+    if am.any():
+        ax.scatter(emb[am, 0], emb[am, 1], c=an[am], s=70, cmap="tab10",
+                   edgecolors="black", linewidths=0.8, label="anchors")
+        ax.legend(fontsize=8)
+    ax.set_title("t-SNE of z (color = assigned cluster; edged = anchors)")
     fig.tight_layout()
     fig.savefig(out_path, dpi=120)
     plt.close(fig)
@@ -145,20 +132,19 @@ def evaluate(cfg, ckpt_path, out_dir, device_str):
     state = torch.load(ckpt_path, map_location=device)
     model.load_state_dict(state["model"])
 
-    z, cluster, anchor, label, nhits = collect(model, loader, device)
+    z, cluster, anchor, nhits = collect(model, loader, device)
     K = cfg["model"]["head"]["num_clusters"]
-    nhits = nhits.reshape(-1)
 
-    anchor_sanity(cluster, anchor)
+    # ---- anchor-based (held-out) ----
+    heldout_anchor_accuracy(cluster, anchor)
+    # ---- unsupervised ----
+    silhouette(z, cluster)
+    cluster_occupancy(cluster, K)
     plot_nhits_by_cluster(nhits, cluster, K, os.path.join(out_dir, "nhits_by_cluster.png"))
-    plot_tsne(z, cluster, label, os.path.join(out_dir, "tsne_z.png"))
-    confusion_labeled(cluster, anchor, label, K, os.path.join(out_dir, "confusion.png"))
-
-    # cluster occupancy of unlabeled events
-    unl = label < 0
-    if unl.any():
-        occ = np.bincount(cluster[unl], minlength=K)
-        print(f"[eval] unlabeled event occupancy per cluster: {occ.tolist()}")
+    plot_tsne(z, cluster, anchor, os.path.join(out_dir, "tsne_z.png"))
+    proto = model.head.prototypes.detach().cpu().numpy()
+    plot_latent_pca(z, cluster, anchor, proto, state.get("epoch", -1),
+                    os.path.join(out_dir, "pca_z.png"))
 
 
 def main():

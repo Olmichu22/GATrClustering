@@ -26,7 +26,10 @@ data:
     event:
       energy: energy            # optional (may be missing)
       anchor_label: anchor_label   # -1 = no anchor, 0..K-1 = class (marked by the user)
-      class_label: particle_type   # optional, EVAL ONLY (may be missing)
+      # particle_type is NOT ground truth (just another noisy classifier): it is
+      # exported for inspection only and is NOT used for validation. Validation is
+      # anchor-based (held-out anchors) + unsupervised (nHits/silhouette/occupancy).
+      class_label: particle_type   # noisy, inspection only -- not used as GT
       nHits_total: null            # optional; if null, derived from offsets
 
   anchor_field: anchor_label     # per-event field with the anchor class
@@ -97,4 +100,5 @@ train:
   device: cuda:0
   num_workers: 4
   out_dir: results/poc_run1
-  plot_every: 5
+  plot_every: 5           # every N epochs: checkpoint + latent-PCA plot (anchors marked)
+  plot_max_events: 3000   # cap events used for the training-time PCA plot
