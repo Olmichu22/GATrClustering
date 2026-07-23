@@ -1,0 +1,160 @@
+"""
+Training entry point for the clustering POC.
+
+    L = loss.swap.weight * L_swap(two dropout views)
+      + lambda_ce        * CE(anchors)
+      + lambda_vicreg    * (var + cov)(z)
+
+Prototypes are initialized (non-random) from the mean anchor embedding of each
+class before the loop. lambda_ce is high at the start (anchors are the most
+reliable signal). No Sinkhorn / no proportion prior in this first iteration.
+
+Run inside the Apptainer image gatr_v9.sif (see GATrAutoencoder/CLAUDE.md).
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+
+import torch
+import torch.nn.functional as F
+import yaml
+from torch_geometric.loader import DataLoader
+
+from .augment import hit_dropout
+from .data.dataset import make_clustering_splits
+from .losses.swap_loss import swap_loss
+from .losses.vicreg import vicreg_loss
+from .models.clustering_model import ClusteringModel
+
+
+def load_config(path: str) -> dict:
+    with open(path, "r") as fh:
+        return yaml.safe_load(fh)
+
+
+@torch.no_grad()
+def init_prototypes(model, loader, device):
+    """Collect z of all anchor events over the train loader and init prototypes."""
+    model.eval()
+    zs, labels = [], []
+    for batch in loader:
+        batch = batch.to(device)
+        anchor = batch.anchor_label
+        mask = anchor >= 0
+        if mask.any():
+            out = model(batch)
+            zs.append(out["z"][mask].detach())
+            labels.append(anchor[mask])
+    if zs:
+        z = torch.cat(zs, 0)
+        lab = torch.cat(labels, 0)
+        model.head.init_prototypes_from_anchors(z, lab)
+        print(f"[init] Prototypes initialized from {z.shape[0]} anchor events.")
+    else:
+        print("[init] WARNING: no anchor events found; prototypes stay random.")
+
+
+def anchor_ce(logits, anchor_label):
+    mask = anchor_label >= 0
+    if not mask.any():
+        return logits.new_tensor(0.0)
+    return F.cross_entropy(logits[mask], anchor_label[mask])
+
+
+def train(cfg: dict):
+    tcfg = cfg["train"]
+    device = torch.device(tcfg.get("device", "cuda:0") if torch.cuda.is_available() else "cpu")
+    os.makedirs(tcfg["out_dir"], exist_ok=True)
+
+    train_ds, val_ds, _ = make_clustering_splits(cfg["data"], cfg["features"], cfg["scaling"])
+    train_loader = DataLoader(
+        train_ds, batch_size=tcfg["batch_size"], shuffle=True,
+        num_workers=tcfg.get("num_workers", 4),
+    )
+
+    model = ClusteringModel(cfg["model"], cfg["features"]).to(device)
+    init_prototypes(model, train_loader, device)
+
+    opt = torch.optim.AdamW(
+        model.parameters(), lr=tcfg["lr"], weight_decay=tcfg.get("weight_decay", 1e-4)
+    )
+    sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=tcfg["epochs"])
+
+    p_drop = cfg["augment"]["hit_dropout"]
+    lcfg = cfg["loss"]
+    swap_w = lcfg["swap"]["weight"]
+    sharpen = lcfg["swap"].get("sharpen_temp", 0.25)
+    lam_ce = lcfg["lambda_ce"]
+    lam_vic = lcfg["lambda_vicreg"]
+    vcfg = lcfg["vicreg"]
+
+    for epoch in range(tcfg["epochs"]):
+        model.train()
+        agg = {"loss": 0.0, "swap": 0.0, "ce": 0.0, "vic": 0.0, "n": 0}
+        for batch in train_loader:
+            batch = batch.to(device)
+            view_a = hit_dropout(batch, p_drop)
+            view_b = hit_dropout(batch, p_drop)
+
+            out_a = model(view_a)
+            out_b = model(view_b)
+
+            l_swap = swap_loss(out_a["logits"], out_b["logits"], sharpen_temp=sharpen)
+            l_ce = anchor_ce(out_a["logits"], batch.anchor_label)
+            l_vic, _, _ = vicreg_loss(
+                out_a["z"], vcfg["var_weight"], vcfg["cov_weight"], vcfg.get("var_gamma", 1.0)
+            )
+            loss = swap_w * l_swap + lam_ce * l_ce + lam_vic * l_vic
+
+            opt.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            opt.step()
+
+            agg["loss"] += float(loss)
+            agg["swap"] += float(l_swap)
+            agg["ce"] += float(l_ce)
+            agg["vic"] += float(l_vic)
+            agg["n"] += 1
+        sched.step()
+
+        n = max(agg["n"], 1)
+        print(
+            f"[epoch {epoch:03d}] loss={agg['loss']/n:.4f} "
+            f"swap={agg['swap']/n:.4f} ce={agg['ce']/n:.4f} vic={agg['vic']/n:.4f}"
+        )
+
+        if (epoch + 1) % tcfg.get("plot_every", 5) == 0 or epoch + 1 == tcfg["epochs"]:
+            torch.save(
+                {"model": model.state_dict(), "cfg": cfg, "epoch": epoch},
+                os.path.join(tcfg["out_dir"], "last.ckpt"),
+            )
+
+    print(f"[done] checkpoint at {os.path.join(tcfg['out_dir'], 'last.ckpt')}")
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--cfg", required=True)
+    ap.add_argument("--data_path", default=None, help="override data.path")
+    ap.add_argument("--epochs", type=int, default=None)
+    ap.add_argument("--out_dir", default=None)
+    ap.add_argument("--device", default=None)
+    args = ap.parse_args()
+
+    cfg = load_config(args.cfg)
+    if args.data_path:
+        cfg["data"]["path"] = args.data_path
+    if args.epochs is not None:
+        cfg["train"]["epochs"] = args.epochs
+    if args.out_dir:
+        cfg["train"]["out_dir"] = args.out_dir
+    if args.device:
+        cfg["train"]["device"] = args.device
+    train(cfg)
+
+
+if __name__ == "__main__":
+    main()

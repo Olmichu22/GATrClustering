@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- GATrClustering project ----
+data/
+results/
+logs/
+*.h5
+*.hdf5
+*.ckpt
+*_stats.yml
+wandb/
