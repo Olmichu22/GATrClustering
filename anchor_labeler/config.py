@@ -63,6 +63,14 @@ class DatasetSpec:
     nhits_field: Optional[str] = None
     # which data axis points RIGHT on screen (beam axis for a test beam)
     beam_axis: str = "z"
+    # Detector envelope, so every event is drawn at the SAME scale instead of
+    # autoscaling to its own hits. ``{x: [min, max], ...}`` per coordinate;
+    # any axis left out is measured from the file itself on startup.
+    bounds: Optional[Dict[str, Any]] = None
+    # fraction of each extent added as margin around the envelope
+    bounds_pad: float = 0.02
+    # draw the envelope as a faint wireframe box
+    show_envelope: bool = True
 
 
 @dataclass
@@ -109,6 +117,8 @@ class LabelerConfig:
                 "coords": self.dataset.coords,
                 "beam_axis": self.dataset.beam_axis,
                 "hit_color_label": self.dataset.hit_color_label,
+                "bounds": self.dataset.bounds,
+                "show_envelope": self.dataset.show_envelope,
             },
             "classes": [
                 {

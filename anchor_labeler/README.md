@@ -32,6 +32,13 @@ The centre panel shows the event in 3D with the **beam axis pointing right**
 (`dataset.beam_axis`, free rotation with the mouse, `r` recentres). Hits are
 coloured by `dataset.hit_color_field` (threshold for SDHCAL).
 
+The axes are **fixed to the full detector envelope**, drawn as a faint
+wireframe box, so the plot does not rescale from event to event and a 70-hit
+muon and a 1500-hit shower are directly comparable. The envelope is measured
+from the file on startup; pin it explicitly with `dataset.bounds` when the file
+only holds a corner of a bigger detector. Untick *detector completo* (or press
+`f`) to fall back to per-event autoscaling.
+
 | key | action |
 |-----|--------|
 | `Enter` / `Space` | confirm the proposed class and advance |
@@ -41,6 +48,7 @@ coloured by `dataset.hit_color_field` (threshold for SDHCAL).
 | `←` / `→` | previous / next event |
 | `u` | undo the decision on the current event |
 | `r` | reset the 3D camera |
+| `f` | toggle full-detector axes (fixed scale) / per-event autoscale |
 
 The left panel edits the sampling parameters (`strategy`, `n_per_class`,
 `seed`, `window_std`, prefer-unseen, which classes to draw) and launches a new

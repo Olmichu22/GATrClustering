@@ -12,6 +12,7 @@ const S = {
   summary: {},
   event: null,
   camera: null,          // preserved across events until the user hits "r"
+  fullDetector: true,    // fixed axes on the whole detector envelope ("f")
 };
 
 const $ = (id) => document.getElementById(id);
@@ -130,6 +131,27 @@ function renderEventInfo() {
   });
 }
 
+/* Wireframe of the detector envelope: 12 edges as one line trace with nulls
+ * between segments, so the reviewer always sees the full volume as reference. */
+function envelopeTrace(bx, by, bz) {
+  const [x0, x1] = bx, [y0, y1] = by, [z0, z1] = bz;
+  const C = [[x0, y0, z0], [x1, y0, z0], [x1, y1, z0], [x0, y1, z0],
+             [x0, y0, z1], [x1, y0, z1], [x1, y1, z1], [x0, y1, z1]];
+  const EDGES = [[0, 1], [1, 2], [2, 3], [3, 0], [4, 5], [5, 6], [6, 7], [7, 4],
+                 [0, 4], [1, 5], [2, 6], [3, 7]];
+  const x = [], y = [], z = [];
+  EDGES.forEach(([a, b]) => {
+    x.push(C[a][0], C[b][0], null);
+    y.push(C[a][1], C[b][1], null);
+    z.push(C[a][2], C[b][2], null);
+  });
+  return {
+    type: "scatter3d", mode: "lines", x, y, z,
+    line: { color: "#33405c", width: 2 },
+    hoverinfo: "skip", showlegend: false, name: "envelope",
+  };
+}
+
 function plotEvent(ev) {
   const coords = ev.coords || {};
   const beam = (S.cfg.dataset.beam_axis || "z");
@@ -163,11 +185,24 @@ function plotEvent(ev) {
     marker, hoverinfo: "text", text: hover, name: "hits",
   };
 
-  const axis = (title) => ({
+  // Fixed detector envelope: every event is drawn at the SAME scale, so a
+  // 70-hit muon and a 1500-hit shower are directly comparable and the plot does
+  // not "breathe" from event to event. `S.fullDetector = false` falls back to
+  // per-event autoscaling.
+  const bounds = (S.cfg.dataset.bounds) || {};
+  const fixed = S.fullDetector && bounds[aX] && bounds[aY] && bounds[aZ];
+
+  const axis = (title, rng) => ({
     title: { text: title }, color: "#9aa4b2",
     gridcolor: "#2a3346", zerolinecolor: "#3b465c",
     backgroundcolor: "#0e1421", showbackground: true,
+    ...(rng ? { range: rng.slice(), autorange: false } : {}),
   });
+
+  const data = [trace];
+  if (fixed && S.cfg.dataset.show_envelope) {
+    data.unshift(envelopeTrace(bounds[aX], bounds[aY], bounds[aZ]));
+  }
 
   const layout = {
     margin: { l: 0, r: 0, t: 0, b: 0 },
@@ -176,11 +211,13 @@ function plotEvent(ev) {
     showlegend: false,
     scene: {
       aspectmode: "data",
-      xaxis: axis(`${aX} (haz →)`), yaxis: axis(aY), zaxis: axis(aZ),
+      xaxis: axis(`${aX} (haz →)`, fixed ? bounds[aX] : null),
+      yaxis: axis(aY, fixed ? bounds[aY] : null),
+      zaxis: axis(aZ, fixed ? bounds[aZ] : null),
       camera: S.camera || { eye: { x: 0.15, y: -2.1, z: 0.75 }, up: { x: 0, y: 0, z: 1 } },
     },
   };
-  Plotly.react("plot", [trace], layout, { displaylogo: false, responsive: true });
+  Plotly.react("plot", data, layout, { displaylogo: false, responsive: true });
   const gd = $("plot");
   if (!gd._camHooked) {
     gd.on("plotly_relayout", (e) => { if (e["scene.camera"]) S.camera = e["scene.camera"]; });
@@ -298,6 +335,11 @@ function applyState(st) {
   loadEvent(S.queue.length ? S.queue[Math.min(S.cursor, S.queue.length - 1)].index : null);
 }
 
+function toggleFullDetector() {
+  S.fullDetector = $("p-full").checked;
+  if (S.event) plotEvent(S.event);
+}
+
 function bindKeys() {
   document.addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
@@ -309,6 +351,7 @@ function bindKeys() {
     if (k === "arrowright") { goto(S.cursor + 1); return; }
     if (k === "arrowleft") { goto(S.cursor - 1); return; }
     if (k === "r") { S.camera = null; if (S.event) plotEvent(S.event); return; }
+    if (k === "f") { $("p-full").checked = !$("p-full").checked; toggleFullDetector(); return; }
     const cls = S.cfg.classes.find((c) => (c.key || String(c.index)).toLowerCase() === k);
     if (cls) decide("kept", cls.index);
   });
@@ -333,6 +376,8 @@ async function init() {
   $("btn-ignore").onclick = () => decide("ignored", null);
   $("btn-skip").onclick = () => decide("skipped", null);
   $("btn-undo").onclick = undo;
+  $("p-full").onchange = toggleFullDetector;
+  S.fullDetector = $("p-full").checked;
   bindKeys();
   markSaved();
 }

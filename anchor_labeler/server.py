@@ -58,8 +58,12 @@ class Labeler:
         return out
 
     def state_payload(self) -> Dict[str, Any]:
+        cfg_pub = self.cfg.public()
+        # Measured envelope (config overrides already applied) so the 3D view
+        # can keep a FIXED scale across events.
+        cfg_pub["dataset"]["bounds"] = self.dataset.bounds()
         return {
-            "config": self.cfg.public(),
+            "config": cfg_pub,
             "n_events": self.dataset.n_events,
             "summary": self.store.summary(),
             "queue": self.queue_view(),
@@ -230,6 +234,9 @@ def main() -> None:
     lab: Labeler = app.config["LABELER"]
     print(f"[labeler] config   : {args.config} ({cfg.name})")
     print(f"[labeler] dataset  : {cfg.dataset.path}  ({lab.dataset.n_events} events)")
+    bd = lab.dataset.bounds()
+    print("[labeler] envelope : " + ", ".join(
+        f"{k} [{v[0]:.1f}, {v[1]:.1f}]" for k, v in bd.items()))
     print(f"[labeler] session  : {lab.store.path}  (autosave {cfg.autosave_seconds}s + per-click tmp)")
     print(f"[labeler] open     : http://{args.host}:{args.port}")
     app.run(host=args.host, port=args.port, debug=args.debug, threaded=True)

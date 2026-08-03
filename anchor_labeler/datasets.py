@@ -33,6 +33,7 @@ class FlatH5Dataset:
         self._offsets = np.asarray(self._f[spec.offsets][:]).astype(np.int64)
         self.n_events = int(self._offsets.size - 1)
         self._nhits: Optional[np.ndarray] = None
+        self._bounds: Optional[Dict[str, list]] = None
 
     # ---- summary level -------------------------------------------------
 
@@ -48,6 +49,41 @@ class FlatH5Dataset:
             else:
                 self._nhits = (self._offsets[1:] - self._offsets[:-1]).astype(np.float64)
         return self._nhits
+
+    def bounds(self) -> Dict[str, list]:
+        """Detector envelope per coordinate: ``{'x': [min, max], ...}``.
+
+        Measured once over ALL hits (chunked, so a big file is not loaded whole)
+        and padded by ``bounds_pad``. Anything the config pins in
+        ``dataset.bounds`` wins over the measurement, which is what you want
+        when the file only contains a corner of a bigger detector.
+        """
+        if self._bounds is not None:
+            return self._bounds
+        sp = self.spec
+        override = sp.bounds or {}
+        out: Dict[str, list] = {}
+        for logical, key in sp.coords.items():
+            fixed = override.get(logical)
+            if fixed is not None:
+                out[logical] = [float(fixed[0]), float(fixed[1])]
+                continue
+            dset = self._f[key]
+            n = dset.shape[0]
+            lo, hi = np.inf, -np.inf
+            step = 4_000_000
+            for a in range(0, n, step):
+                chunk = np.asarray(dset[a:a + step], dtype=np.float64)
+                if chunk.size:
+                    lo = min(lo, float(chunk.min()))
+                    hi = max(hi, float(chunk.max()))
+            if not np.isfinite(lo):     # empty file
+                lo, hi = 0.0, 1.0
+            span = max(hi - lo, 1e-6)
+            pad = span * float(sp.bounds_pad)
+            out[logical] = [lo - pad, hi + pad]
+        self._bounds = out
+        return out
 
     def mask_for_source(self, source: Dict[str, Any]) -> np.ndarray:
         """Boolean per-event mask of the candidate pool described by ``source``.

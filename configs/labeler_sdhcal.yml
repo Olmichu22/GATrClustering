@@ -22,6 +22,12 @@ dataset:
   hit_extra_fields:           # extra per-hit values shown on hover
     layer: k
   nhits_field: nHits_total    # null -> derived from offsets
+  # Fixed axis ranges so the view does not rescale event by event. Omit an axis
+  # (or the whole block) and it is measured from the file on startup; pin it
+  # when this file only covers part of the real detector volume.
+  bounds: null                # e.g. {x: [-500, 500], y: [-500, 500], z: [0, 1300]}
+  bounds_pad: 0.02            # margin as a fraction of each extent
+  show_envelope: true         # faint wireframe box around the volume
   event_fields:               # info panel: label -> h5 key
     energy: energy
     nHits_total: nHits_total
