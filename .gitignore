@@ -216,3 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# anchor labeler: local review sessions and exports
+sessions/
+.venv_viewer/
