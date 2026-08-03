@@ -51,6 +51,16 @@ classes:
     color: "#2ca02c"
     key: "2"
     source: {type: flag, field: is_muon}
+  # Multi-particle event (two or more incident particles in the same trigger).
+  # No flag tags it, so it is never auto-proposed: it exists as a MANUAL
+  # correction target -- press `3` on any reviewed event that looks multi-track.
+  # It may or may not end up used for training; labeling it now costs nothing
+  # and cannot be recovered later.
+  - index: 3
+    name: multip
+    color: "#9467bd"
+    key: "3"
+    source: null
     # Alternatives to a boolean flag:
     #   source: {type: value, field: particle_type, value: 2}
     #   source: {type: range, field: energy, min: 25, max: 35}
