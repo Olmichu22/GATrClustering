@@ -1,0 +1,37 @@
+# ============================================================
+# Anchor marking config: fills the per-event `anchor_label` field
+# (-1 = no anchor, 0..K-1 = class) in an already-converted flat HDF5.
+# Two modes: `nhits_sampling` (automatic) and `manual` (explicit lists).
+# ============================================================
+
+mode: nhits_sampling        # nhits_sampling | manual
+
+# per-event field holding the hit count; if null it is derived from offsets
+nhits_field: nHits_total
+
+# ---- mode: nhits_sampling ----
+# For each class, pick `n_per_class` events whose nHits is near the class mean
+# (within mean +/- window_std * std), sampled randomly but reproducibly (seed).
+# If the band has fewer than n_per_class events, it auto-widens to the closest N.
+n_per_class: 50
+seed: 42
+window_std: 0.5
+
+# class index -> source flag field (boolean, mutually exclusive)
+# Convention: 0=electron, 1=pion, 2=muon (K = number of entries here).
+classes:
+  0: is_electron
+  1: is_pion
+  2: is_muon
+
+# Alternative source (instead of `classes` flags): a single integer field with a
+# value->class_index map. Leave null to use the flags above.
+int_source: null            # e.g. {field: particle_type, map: {0: 0, 1: 1, 2: 2}}
+
+# ---- mode: manual ----
+# Explicit event indices per class (0-based, into the h5 event order).
+# Only used when mode == manual.
+manual:
+  0: []                     # electron event indices
+  1: []                     # pion event indices
+  2: []                     # muon event indices

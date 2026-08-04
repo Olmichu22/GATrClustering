@@ -217,6 +217,16 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
+# ---- GATrClustering project ----
+data/
+results/
+logs/
+*.h5
+*.hdf5
+*.ckpt
+*_stats.yml
+wandb/
+
 # anchor labeler: local review sessions and exports
 sessions/
 .venv_viewer/

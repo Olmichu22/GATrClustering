@@ -1,0 +1,61 @@
+# ============================================================
+# ROOT -> flat HDF5 (CSR) export config for the clustering POC.
+#
+# Environment (uproot lives there):
+#   source /cvmfs/sw.hsf.org/key4hep/setup.sh
+#
+# Only the fields listed below are exported. Everything is selectable:
+# `hit` / `event` map a LOGICAL name (the key written to the h5, and the name
+# the POC's data.field_map will read) to a ROOT branch name. Add/remove entries
+# to change what goes into the dataset -- e.g. drop `thr`, or add a per-event
+# metric you want to keep for diagnostics.
+# ============================================================
+
+tree: SDHCAL
+
+# ----- per-hit branches (variable-length arrays) -----
+# For this file the physical per-hit quantities are x,y,z,I,J,layer (+threshold).
+# k and z are collinear; both are exported but the POC config picks one.
+hit:
+  x: x
+  y: y
+  z: z
+  i: I
+  j: J
+  k: layer
+  thr: threshold        # optional; remove this line to export without thresholds
+
+# ----- per-event scalars (all others are event-level metrics; keep what you need) -----
+event:
+  energy: energy
+  particle_type: particle_type
+  cerenkovFlag: cerenkovFlag
+  run: run
+  nHits_total: nHits_total
+  # class-tagging flags (mutually exclusive) used to pick anchors downstream
+  is_electron: is_electron
+  is_pion: is_pion
+  is_muon: is_muon
+
+# ----- threshold normalization -----
+# Map offset-encoded thresholds (5/6/7) back to 1/2/3 per hit. Set to false if
+# the branch is already in {1,2,3} and you want it untouched.
+normalize_thr: true
+thr_logical: thr          # which logical hit field to normalize
+
+# ----- anchor label (the field the POC uses for CE) -----
+# mode: none        -> write anchor_label = -1 for all events (you mark anchors later)
+#       from_branch -> copy an event branch verbatim into anchor_label
+anchor:
+  mode: none
+  branch: null            # used only when mode == from_branch
+
+# per-hit output dtypes (logical name -> numpy dtype string)
+hit_dtypes:
+  x: float32
+  y: float32
+  z: float32
+  i: int32
+  j: int32
+  k: int32
+  thr: int8
