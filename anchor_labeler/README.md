@@ -65,6 +65,29 @@ proposed twice.
   `python -m src.convert.mark_anchors --h5 <file> --config <this yml>`
 * optionally a **copy of the dataset** with `anchor_label` filled in (-1
   elsewhere), ready for the training configs.
+* with `export_subsets: true`, **one h5 per class** holding only the kept events
+  of that class (CSR rebuilt, `source_indices` kept in the attrs).
+
+Which of the last two you want depends on the file's role. If it *is* the
+training file, fill `anchor_label` in place. If it is a pure **anchor source**
+consumed via `data.anchor_datasets`, you need the per-class subsets: that loader
+forces one label on **every** event of the file it is given, so a file still
+containing the events you rejected would relabel them anyway.
+
+## Curating a dedicated single-particle run
+
+`configs/labeler_ebeam.yml` is the second use case: the dedicated 70 GeV
+electron beam. There the primary's problem (few electrons, unreliable flag) is
+replaced by the opposite one — 6000 events that are electrons by construction,
+polluted by beam pions and muons. So electron is the only proposable class
+(`source: {type: all}`) and the review job is to press `1`/`2`/`i` on what is
+not an electron.
+
+Two details matter there and are commented in the config: the strategy is
+`random`, because `nhits_band` would draw events near the nHits mean — exactly
+the ones most likely to be genuine — and hide the contamination; and
+`dataset.bounds` is pinned to the *primary's* envelope so the showers are not
+zoomed in and the two sessions stay visually comparable.
 
 ## State is never lost
 

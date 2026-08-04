@@ -10,8 +10,14 @@ result drops into the existing pipeline without glue code:
   anchors_<stamp>.yml   ``mode: manual`` config readable by
                         ``src/convert/mark_anchors.py``
 
-and, optionally, a copy of the dataset with ``anchor_label`` filled in
-(-1 everywhere else) which the training configs can consume directly.
+and, optionally, either
+
+  * a copy of the dataset with ``anchor_label`` filled in (-1 everywhere else),
+    for a PRIMARY file that is also the training file, or
+  * one small h5 PER CLASS holding only the kept events of that class
+    (``write_subsets``), for a file used purely as an anchor source. That is the
+    shape ``data.anchor_datasets`` expects: it forces one label on every event
+    of the file, so the file must contain nothing else.
 """
 
 from __future__ import annotations
@@ -33,7 +39,8 @@ def _stamp() -> str:
 
 def export_session(cfg: LabelerConfig, store: SessionStore,
                    write_h5: bool = False, h5_out: Optional[str] = None,
-                   anchor_field: str = "anchor_label") -> Dict[str, Any]:
+                   anchor_field: str = "anchor_label",
+                   write_subsets: bool = False) -> Dict[str, Any]:
     store.save()
     kept = store.kept_anchors()
     os.makedirs(cfg.export_dir, exist_ok=True)
@@ -94,7 +101,77 @@ def export_session(cfg: LabelerConfig, store: SessionStore,
 
     if write_h5:
         out["h5"] = _write_h5(cfg, kept, h5_out, anchor_field, stamp)
+    if write_subsets:
+        out["subsets"] = _write_subsets(cfg, kept, anchor_field, stamp)
     return out
+
+
+def _write_subsets(cfg: LabelerConfig, kept: Dict[int, int], anchor_field: str,
+                   stamp: str) -> Dict[str, str]:
+    """One h5 per class with ONLY that class's kept events (CSR rebuilt).
+
+    Every per-hit array is re-sliced event by event and ``offsets`` recomputed,
+    so the output is a valid flat/CSR file the training loader reads unchanged.
+    Per-event arrays are indexed with the kept list. Arrays are classified by
+    length against the source (n_hits vs n_events), so no field list is
+    hardcoded and a different detector exports the same way.
+    """
+    import h5py
+    import numpy as np
+
+    src = cfg.dataset.path
+    names = {c.index: c.name for c in cfg.classes}
+    by_class: Dict[int, List[int]] = {}
+    for idx, lab in kept.items():
+        by_class.setdefault(int(lab), []).append(int(idx))
+
+    stem = os.path.splitext(os.path.basename(src))[0]
+    os.makedirs(cfg.export_dir, exist_ok=True)
+    written: Dict[str, str] = {}
+
+    with h5py.File(src, "r") as f:
+        off = np.asarray(f[cfg.dataset.offsets])
+        n_events, n_hits = len(off) - 1, int(off[-1])
+        hit_keys, event_keys = [], []
+        for k in f:
+            if k == cfg.dataset.offsets:
+                continue
+            n = f[k].shape[0]
+            if n == n_hits and n != n_events:
+                hit_keys.append(k)
+            elif n == n_events:
+                event_keys.append(k)
+
+        for ci in sorted(by_class):
+            sel = np.array(sorted(i for i in by_class[ci] if 0 <= i < n_events), dtype=np.int64)
+            if sel.size == 0:
+                continue
+            counts = (off[sel + 1] - off[sel]).astype(np.int64)
+            new_off = np.zeros(sel.size + 1, dtype=np.int64)
+            np.cumsum(counts, out=new_off[1:])
+            # hit rows of the kept events, in order
+            rows = np.concatenate([np.arange(off[i], off[i + 1], dtype=np.int64)
+                                   for i in sel]) if sel.size else np.zeros(0, dtype=np.int64)
+
+            name = names.get(ci, str(ci))
+            path = os.path.join(cfg.export_dir, f"{stem}_manual_{name}_{stamp}.h5")
+            with h5py.File(path, "w") as g:
+                g.create_dataset(cfg.dataset.offsets, data=new_off, compression="lzf")
+                for k in hit_keys:
+                    g.create_dataset(k, data=np.asarray(f[k])[rows], compression="lzf")
+                for k in event_keys:
+                    if k == anchor_field:
+                        continue
+                    g.create_dataset(k, data=np.asarray(f[k])[sel], compression="lzf")
+                g.create_dataset(anchor_field,
+                                 data=np.full(sel.size, int(ci), dtype=np.int64),
+                                 compression="lzf")
+                g.attrs["source_file"] = src
+                g.attrs["source_indices"] = sel
+                g.attrs["anchor_label"] = int(ci)
+                g.attrs["exported"] = stamp
+            written[name] = path
+    return written
 
 
 def _write_h5(cfg: LabelerConfig, kept: Dict[int, int], h5_out: Optional[str],

@@ -202,7 +202,8 @@ def create_app(cfg: LabelerConfig, session_path: Optional[str] = None) -> Flask:
                 res = export_session(lab.cfg, lab.store,
                                      write_h5=bool(body.get("write_h5")),
                                      h5_out=body.get("h5_out") or None,
-                                     anchor_field=str(body.get("anchor_field", "anchor_label")))
+                                     anchor_field=str(body.get("anchor_field", "anchor_label")),
+                                     write_subsets=bool(body.get("write_subsets")))
             except Exception as exc:
                 return jsonify({"error": f"{type(exc).__name__}: {exc}"}), 500
             return jsonify(res)

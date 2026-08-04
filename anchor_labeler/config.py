@@ -100,6 +100,10 @@ class LabelerConfig:
     session_path: str
     export_dir: str
     autosave_seconds: float = 5.0
+    # True when this file is an ANCHOR SOURCE, not the training file: the export
+    # then also writes one h5 per class holding only the kept events, which is
+    # what data.anchor_datasets consumes (it forces one label per file).
+    export_subsets: bool = False
     raw: Dict[str, Any] = field(default_factory=dict)
 
     def class_by_index(self, idx: int) -> Optional[ClassSpec]:
@@ -133,6 +137,7 @@ class LabelerConfig:
             "sampling": self.sampling.as_dict(),
             "session_path": self.session_path,
             "autosave_seconds": self.autosave_seconds,
+            "export_subsets": self.export_subsets,
         }
 
 
@@ -190,5 +195,6 @@ def load_config(path: str) -> LabelerConfig:
         session_path=session_path,
         export_dir=export_dir,
         autosave_seconds=float(raw.get("autosave_seconds", 5.0)),
+        export_subsets=bool(raw.get("export_subsets", False)),
         raw=copy.deepcopy(raw),
     )

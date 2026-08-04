@@ -307,9 +307,12 @@ async function exportAnchors() {
   const withH5 = confirm("¿Escribir también una copia del h5 con anchor_label?\n\n" +
                          "Aceptar = json + csv + yml + h5\nCancelar = solo json + csv + yml");
   try {
-    const res = await post("/api/export", { write_h5: withH5 });
+    const subsets = !!(S.cfg && S.cfg.export_subsets);
+    const res = await post("/api/export", { write_h5: withH5, write_subsets: subsets });
     const per = Object.entries(res.per_class).map(([k, v]) => `${k}:${v}`).join("  ");
-    toast(`Exportados ${res.n_anchors} anchors (${per}) → ${res.json}${res.h5 ? " + h5" : ""}`, "ok");
+    const extra = (res.h5 ? " + h5" : "") +
+      (res.subsets ? ` + ${Object.keys(res.subsets).length} h5 por clase` : "");
+    toast(`Exportados ${res.n_anchors} anchors (${per}) → ${res.json}${extra}`, "ok");
     console.log("export:", res);
   } catch (e) {
     toast("Export fallido: " + e.message, "err");
