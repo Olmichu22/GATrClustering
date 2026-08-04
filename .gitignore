@@ -218,7 +218,11 @@ __marimo__/
 .streamlit/secrets.toml
 
 # ---- GATrClustering project ----
+# NOTE: `data/` matches a directory called data at ANY depth, which silently
+# swallowed the source package src/data/ (the loader!). Keep the datasets
+# ignored but never the code.
 data/
+!src/data/
 results/
 logs/
 *.h5
