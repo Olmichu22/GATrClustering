@@ -1,0 +1,189 @@
+"""
+Dataset backends for the labeler.
+
+A backend only has to answer three questions:
+
+  * how many events are there            -> ``n_events``
+  * summary arrays for the sampler       -> ``nhits()``, ``mask_for_source()``
+  * the hits + metadata of ONE event     -> ``event(i)``
+
+``hdf5_flat`` implements the flat/CSR layout produced by
+``src/convert/root_to_flat_h5.py`` (offsets + flat per-hit arrays + per-event
+arrays). Adding another format (ROOT, parquet, npz, ...) means writing one class
+with the same three methods and registering it in ``BACKENDS``; no other module
+knows about HDF5.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Dict, Optional
+
+import h5py
+import numpy as np
+
+from .config import DatasetSpec
+
+
+def _json_scalar(v: Any) -> Any:
+    """One value -> something JSON.parse accepts (NaN/Inf -> None)."""
+    if isinstance(v, float) and not np.isfinite(v):
+        return None
+    return v
+
+
+class FlatH5Dataset:
+    """Read-only view of a flat (CSR) HDF5 event file."""
+
+    def __init__(self, spec: DatasetSpec):
+        self.spec = spec
+        self._f = h5py.File(spec.path, "r")
+        self._offsets = np.asarray(self._f[spec.offsets][:]).astype(np.int64)
+        self.n_events = int(self._offsets.size - 1)
+        self._nhits: Optional[np.ndarray] = None
+        self._bounds: Optional[Dict[str, list]] = None
+
+    # ---- summary level -------------------------------------------------
+
+    def has_field(self, key: str) -> bool:
+        return key in self._f
+
+    def nhits(self) -> np.ndarray:
+        """Per-event hit count (from the configured field, else from offsets)."""
+        if self._nhits is None:
+            fld = self.spec.nhits_field
+            if fld and fld in self._f:
+                self._nhits = np.asarray(self._f[fld][:]).astype(np.float64)
+            else:
+                self._nhits = (self._offsets[1:] - self._offsets[:-1]).astype(np.float64)
+        return self._nhits
+
+    def bounds(self) -> Dict[str, list]:
+        """Detector envelope per coordinate: ``{'x': [min, max], ...}``.
+
+        Measured once over ALL hits (chunked, so a big file is not loaded whole)
+        and padded by ``bounds_pad``. Anything the config pins in
+        ``dataset.bounds`` wins over the measurement, which is what you want
+        when the file only contains a corner of a bigger detector.
+        """
+        if self._bounds is not None:
+            return self._bounds
+        sp = self.spec
+        override = sp.bounds or {}
+        out: Dict[str, list] = {}
+        for logical, key in sp.coords.items():
+            fixed = override.get(logical)
+            if fixed is not None:
+                out[logical] = [float(fixed[0]), float(fixed[1])]
+                continue
+            dset = self._f[key]
+            n = dset.shape[0]
+            lo, hi = np.inf, -np.inf
+            step = 4_000_000
+            for a in range(0, n, step):
+                chunk = np.asarray(dset[a:a + step], dtype=np.float64)
+                if chunk.size:
+                    lo = min(lo, float(chunk.min()))
+                    hi = max(hi, float(chunk.max()))
+            if not np.isfinite(lo):     # empty file
+                lo, hi = 0.0, 1.0
+            span = max(hi - lo, 1e-6)
+            pad = span * float(sp.bounds_pad)
+            out[logical] = [lo - pad, hi + pad]
+        self._bounds = out
+        return out
+
+    def mask_for_source(self, source: Dict[str, Any]) -> np.ndarray:
+        """Boolean per-event mask of the candidate pool described by ``source``.
+
+        Supported source types (all config-driven, no field names hardcoded):
+          {type: flag,  field: is_pion}                 -> field != 0
+          {type: value, field: particle_type, value: 1} -> field == value
+          {type: range, field: energy, min: .., max: ..}
+          {type: all}
+        """
+        stype = str(source.get("type", "flag"))
+        if stype == "all":
+            return np.ones(self.n_events, dtype=bool)
+        fld = source.get("field")
+        if not fld:
+            raise ValueError(f"source type '{stype}' needs a 'field'")
+        if fld not in self._f:
+            raise KeyError(f"field '{fld}' not present in {self.spec.path}")
+        vals = np.asarray(self._f[fld][:])
+        if vals.shape[0] != self.n_events:
+            raise ValueError(f"field '{fld}' is per-hit, not per-event")
+        if stype == "flag":
+            return vals.astype(bool)
+        if stype == "value":
+            return vals.astype(np.int64) == int(source["value"])
+        if stype == "range":
+            lo = float(source.get("min", -np.inf))
+            hi = float(source.get("max", np.inf))
+            v = vals.astype(np.float64)
+            return (v >= lo) & (v <= hi)
+        raise ValueError(f"unknown source type '{stype}'")
+
+    # ---- event level ---------------------------------------------------
+
+    @staticmethod
+    def _clean(values: np.ndarray) -> list:
+        """Hit array -> list of finite floats (NaN/Inf -> None).
+
+        Python's json writes NaN/Infinity as bare literals, which the browser's
+        JSON.parse rejects: one non-finite value anywhere in the payload and the
+        whole event silently fails to draw. Any field of the file can be
+        non-finite (E70GeV_2012_filtered.h5 has runNr/eventNr = NaN), so every
+        value that reaches the JSON goes through here.
+        """
+        arr = np.asarray(values, dtype=np.float64)
+        return [None if not np.isfinite(v) else float(v) for v in arr]
+
+    def event(self, index: int) -> Dict[str, Any]:
+        """Hits and metadata of one event, JSON-ready."""
+        i = int(index)
+        if not (0 <= i < self.n_events):
+            raise IndexError(f"event {i} out of range (n_events={self.n_events})")
+        a, b = int(self._offsets[i]), int(self._offsets[i + 1])
+        sp = self.spec
+
+        coords: Dict[str, list] = {}
+        for logical, key in sp.coords.items():
+            coords[logical] = self._clean(self._f[key][a:b])
+
+        color = None
+        if sp.hit_color_field and sp.hit_color_field in self._f:
+            color = self._clean(self._f[sp.hit_color_field][a:b])
+
+        extras: Dict[str, list] = {}
+        for label, key in (sp.hit_extra_fields or {}).items():
+            if key in self._f:
+                extras[label] = self._clean(self._f[key][a:b])
+
+        meta: Dict[str, Any] = {"nHits": b - a}
+        for label, key in (sp.event_fields or {}).items():
+            if key in self._f:
+                v = self._f[key][i]
+                meta[label] = _json_scalar(v.item() if hasattr(v, "item") else v)
+        return {
+            "index": i,
+            "coords": coords,
+            "color": color,
+            "hit_extra": extras,
+            "meta": meta,
+        }
+
+    def close(self) -> None:
+        try:
+            self._f.close()
+        except Exception:
+            pass
+
+
+BACKENDS = {"hdf5_flat": FlatH5Dataset}
+
+
+def open_dataset(spec: DatasetSpec):
+    if spec.backend not in BACKENDS:
+        raise ValueError(f"unknown dataset backend '{spec.backend}' "
+                         f"(known: {sorted(BACKENDS)})")
+    return BACKENDS[spec.backend](spec)

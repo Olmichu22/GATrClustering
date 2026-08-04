@@ -1,0 +1,133 @@
+# ============================================================
+# Anchor labeler — FULL filtered 2012 sample (833 545 events, 70 GeV).
+#
+#   bash run_labeler.sh --config configs/labeler_filtered.yml --port 8052
+#
+# This is the sample we now want to train on, so the anchors are labeled on the
+# very file that will be the primary: an anchor is an EVENT INDEX, and indices
+# only mean anything against one file.
+#
+# Three things differ from configs/labeler_sdhcal.yml and each has a reason:
+#
+#  1. No is_electron/is_pion/is_muon flags here -- the class pools come from
+#     `particle_type` by VALUE. The coding matches the training convention, which
+#     the hit counts confirm: 0 -> median 40 hits, 1 -> 995, 2 -> 74.
+#
+#  2. A third of the file (281 806 events, 33.8%) has particle_type = -1 with a
+#     median of 13 hits: unclassified, near-empty. It is NOT proposed as any
+#     class. Decide separately whether it even enters training (`filter_status`
+#     is shown in the info panel for exactly that).
+#
+#  3. A `penetrante` class exists only to SAMPLE the 150-350 hit band. See below.
+#
+# Units note: this file is in cm with a 1-based layer index, not the mm/0-based
+# frame of data/E70GeV_2012.h5. That does NOT matter here -- the labeler only
+# displays what it reads and exports event indices. It matters in the TRAINING
+# config, which must carry
+#   hit_affine: {x: [10.0, -5.204], y: [10.0, -5.204], z: [10.0, 198.5], k: [1.0, -1.0]}
+# to put this sample in the same frame as everything else.
+# ============================================================
+
+name: TB 2012 filtrado (833k, 70 GeV)
+
+dataset:
+  backend: hdf5_flat
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/E70GeV_2012_filtered.h5
+  offsets: offsets
+  coords: {x: x, y: y, z: z}
+  beam_axis: z
+  hit_color_field: thr
+  hit_color_label: thr
+  hit_extra_fields:
+    layer: k
+  nhits_field: nHits_total
+
+  # Pinned rather than measured: measuring scans 67.2 M hits on every startup
+  # (~15 s). These are the file's own extents in ITS units (cm), padded.
+  bounds:
+    x: [0.5, 100.6]
+    y: [0.5, 100.6]
+    z: [2.0, 135.2]
+  bounds_pad: 0.0
+  show_envelope: true
+
+  event_fields:
+    nHits_total: nHits_total
+    particle_type: particle_type      # -1 = unclassified (33.8% of the file)
+    filter_status: filter_status      # 1 = passes the quality filters (62.5%)
+    penetration_cond: penetration_cond
+    energy: energy
+    # runNr/eventNr exist as branches but are NaN for EVERY event of this file,
+    # so they are not shown. (The NaN is also what broke the 3D view once: the
+    # JSON carried a bare `NaN` literal, which JSON.parse rejects, so nothing
+    # drew. datasets.py now maps non-finite values to null regardless.)
+
+# Class index convention of the training pipeline: 0=electron, 1=pion, 2=muon.
+classes:
+  - index: 0
+    name: electron
+    color: "#d62728"
+    key: "0"
+    # Only 1328 events (0.2%) and the flag is bimodal (p10 17, p50 40, p90 876
+    # hits), i.e. as unreliable as every flag we have looked at. Reviewing it is
+    # the point; the dedicated electron run is where the volume will come from.
+    source: {type: value, field: particle_type, value: 0}
+
+  - index: 1
+    name: pion
+    color: "#1f77b4"
+    key: "1"
+    source: {type: value, field: particle_type, value: 1}
+
+  - index: 2
+    name: muon
+    color: "#2ca02c"
+    key: "2"
+    source: {type: value, field: particle_type, value: 2}
+
+  - index: 3
+    name: multip
+    color: "#9467bd"
+    key: "3"
+    # Manual-only, as in the 2012 session: no flag tags a multi-particle event.
+    source: null
+
+  - index: 4
+    name: penetrante
+    color: "#ff7f0e"
+    key: "4"
+    # THE reason this config exists. S12/S13 both put a spurious peak around 200
+    # hits into the pion cluster, and the S13 evaluation showed the multip class
+    # does not fix it (13.0% -> 14.4% of the band). The cause is that no anchor
+    # has that geometry: the band's events are PENETRATING and sparse (46 active
+    # layers, density ~4.3) while muon anchors sit at density 1.82 and multip at
+    # 23 with 19 layers. Nothing covers it, so the model extrapolates.
+    #
+    # This is a SAMPLING TARGET first and a class second: it draws the band so
+    # you can look at those events and say what they are. If they turn out to be
+    # muon accompaniment or late hadronic interactions, relabel to 1/2/3 and this
+    # class ends up empty -- which is a perfectly good outcome. Keep it as a real
+    # class only if the events form their own category; then num_clusters must
+    # become 5 and cluster_prior needs a fifth entry.
+    source: {type: range, field: nHits_total, min: 150, max: 350}
+
+sampling:
+  # random, not nhits_band: for the class pools the band would draw the middle of
+  # each nHits distribution, i.e. the easy events, and for `penetrante` the band
+  # is already the selection. Uniform keeps the view honest.
+  strategy: random
+  n_per_class: 30
+  seed: 42
+  window_std: 1.0
+  prefer_unseen: true
+
+session_path: ../sessions/filtered_2012.json
+export_dir: ../sessions/exports
+
+autosave_seconds: 5
+
+# The primary IS the training file, so anchors belong in its own anchor_label
+# (write_h5) or in the mark_anchors yml -- not in per-class subsets, which are
+# for files used purely as an anchor source. Note the h5 copy is 566 MB per
+# export: prefer the yml until the session is settled.
+export_subsets: false

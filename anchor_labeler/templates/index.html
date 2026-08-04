@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Anchor labeler</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/vendor/plotly.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>Anchor labeler <span id="cfg-name" class="muted"></span></h1>
+  <div class="header-right">
+    <span id="save-state" class="pill">…</span>
+    <button id="btn-save" class="ghost" title="Forzar guardado">Guardar</button>
+    <button id="btn-export" class="primary">Exportar anchors</button>
+  </div>
+</header>
+
+<main>
+  <aside id="side-left">
+    <section class="card">
+      <h2>Muestreo</h2>
+      <label>Estrategia
+        <select id="p-strategy">
+          <option value="nhits_band">nhits_band (banda alrededor de la media)</option>
+          <option value="random">random (uniforme)</option>
+        </select>
+      </label>
+      <label>N por clase <input id="p-n" type="number" min="1" max="2000" step="1"></label>
+      <label>Semilla <input id="p-seed" type="number" step="1"></label>
+      <label>window_std <input id="p-wstd" type="number" step="0.1" min="0"></label>
+      <label class="row"><input id="p-unseen" type="checkbox" checked> priorizar no vistos</label>
+      <label class="row"><input id="p-append" type="checkbox"> añadir a la cola actual</label>
+      <div id="class-filter" class="chips"></div>
+      <button id="btn-sample" class="primary wide">Nuevo muestreo</button>
+      <p class="hint">Los ignorados nunca vuelven. Los saltados y los no vistos sí pueden reaparecer.</p>
+      <div id="round-stats" class="stats"></div>
+    </section>
+
+    <section class="card">
+      <h2>Progreso</h2>
+      <div id="summary" class="stats"></div>
+    </section>
+  </aside>
+
+  <section id="center">
+    <div id="event-header">
+      <div>
+        <span class="muted">Evento</span>
+        <strong id="ev-index">—</strong>
+        <span class="muted" id="ev-position"></span>
+      </div>
+      <div id="ev-proposed"></div>
+      <div id="ev-status"></div>
+      <label class="row inline" title="Ejes fijos al volumen completo del detector (f)">
+        <input id="p-full" type="checkbox" checked> detector completo <kbd>f</kbd>
+      </label>
+    </div>
+    <div id="plot"></div>
+    <div id="meta" class="meta"></div>
+    <div id="actions">
+      <button id="btn-prev" class="ghost">◀ Anterior (←)</button>
+      <div id="class-buttons"></div>
+      <button id="btn-ignore" class="danger">Ignorar (i)</button>
+      <button id="btn-skip" class="ghost">Saltar (s)</button>
+      <button id="btn-undo" class="ghost">Deshacer (u)</button>
+      <button id="btn-next" class="ghost">Siguiente (→)</button>
+    </div>
+    <p class="hint keys">Enter/Espacio = confirmar la propuesta · teclas de clase = corregir · i = ignorar ·
+      s = saltar · ←/→ navegar · u = deshacer · r = recentrar la vista · f = detector completo</p>
+  </section>
+
+  <aside id="side-right">
+    <section class="card">
+      <h2>Cola <span id="queue-count" class="muted"></span></h2>
+      <div id="queue" class="queue"></div>
+    </section>
+  </aside>
+</main>
+
+<div id="toast" class="toast hidden"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

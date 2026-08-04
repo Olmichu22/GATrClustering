@@ -1,0 +1,91 @@
+# ============================================================
+# Anchor labeler config — DEDICATED 70 GeV electron beam (TB 2012, run 715723),
+# thr1<->thr2 already corrected (built by scratchpad/fix_thr.py).
+#
+# Why a second config: the primary (E70GeV_2012.h5) holds ~460 flagged electrons
+# out of 39k events, and that flag is not the labeled particle. The dedicated
+# e-beam run holds 6000 events that are electrons BY CONSTRUCTION -- the problem
+# there is not scarcity but CONTAMINATION (beam pions/muons that share the
+# trigger). So here the labeler is used the other way round: everything is
+# proposed as electron and the review job is to THROW OUT what is not one.
+#
+#   bash run_labeler.sh --config configs/labeler_ebeam.yml --port 8051
+#
+# Note this file has no is_electron/particle_type/cerenkov branches -- it was
+# exported as a pure anchor source -- hence `source: {type: all}` and the
+# reduced event_fields below.
+# ============================================================
+
+name: E-beam 70GeV 2012 (dedicado, thrfix)
+
+dataset:
+  backend: hdf5_flat
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/El70GeV_2012_TBanchors_v2_thrfix.h5
+  offsets: offsets
+  coords: {x: x, y: y, z: z}
+  beam_axis: z
+  hit_color_field: thr
+  hit_color_label: thr
+  hit_extra_fields:
+    layer: k
+  nhits_field: nHits_total
+  # Pinned to the PRIMARY's envelope, not measured from this file: the e-beam
+  # showers occupy a small corner of the detector and a self-measured box would
+  # zoom in, making these events look nothing like the ones reviewed in
+  # configs/labeler_sdhcal.yml. Same box -> the two sessions are comparable.
+  bounds:
+    x: [-14.6, 1013.7]
+    y: [-14.6, 1013.7]
+    z: [200.2, 1568.8]
+  bounds_pad: 0.0
+  show_envelope: true
+  event_fields:
+    energy: energy
+    nHits_total: nHits_total
+    anchor_label: anchor_label
+
+# Same index convention as the training pipeline. Only electron is proposable
+# (the whole file is nominally an electron beam); the other three exist purely
+# as CORRECTION targets, which is the entire point of reviewing this file:
+# press 1/2 on a beam pion/muon, or `i` to drop the event.
+classes:
+  - index: 0
+    name: electron
+    color: "#d62728"
+    key: "0"
+    source: {type: all}
+  - index: 1
+    name: pion
+    color: "#1f77b4"
+    key: "1"
+    source: null
+  - index: 2
+    name: muon
+    color: "#2ca02c"
+    key: "2"
+    source: null
+  - index: 3
+    name: multip
+    color: "#9467bd"
+    key: "3"
+    source: null
+
+sampling:
+  # random, NOT nhits_band: the band draws events near the nHits mean, i.e.
+  # exactly the ones most likely to be genuine electrons -- it would hide the
+  # contamination this session exists to find. Uniform sampling gives an
+  # unbiased view of the beam, tails included.
+  strategy: random
+  n_per_class: 40
+  seed: 42
+  window_std: 1.0
+  prefer_unseen: true
+
+session_path: ../sessions/ebeam_2012.json
+export_dir: ../sessions/exports
+autosave_seconds: 5
+
+# This file is an ANCHOR SOURCE, not the training file: export one h5 per class
+# containing only the kept events, ready for data.anchor_datasets (which forces
+# one label on every event of the file it is given).
+export_subsets: true

@@ -1,0 +1,85 @@
+# ============================================================
+# Anchor labeler config — SDHCAL test beam, E70GeV 2012.
+#
+# This is the ONLY place the app learns about a detector: file, field names,
+# classes and how candidates are proposed. Point `dataset.path` (and the field
+# names) at another flat/CSR h5 and the same UI labels a different experiment.
+#
+#   source setup.sh
+#   python -m anchor_labeler.server --config configs/labeler_sdhcal.yml --port 8060
+# ============================================================
+
+name: SDHCAL E70GeV 2012
+
+dataset:
+  backend: hdf5_flat          # see anchor_labeler/datasets.py::BACKENDS
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/E70GeV_2012.h5
+  offsets: offsets
+  coords: {x: x, y: y, z: z}  # logical axis -> h5 key
+  beam_axis: z                # this axis is drawn pointing RIGHT on screen
+  hit_color_field: thr        # per-hit field used to colour the 3D view
+  hit_color_label: thr
+  hit_extra_fields:           # extra per-hit values shown on hover
+    layer: k
+  nhits_field: nHits_total    # null -> derived from offsets
+  # Fixed axis ranges so the view does not rescale event by event. Omit an axis
+  # (or the whole block) and it is measured from the file on startup; pin it
+  # when this file only covers part of the real detector volume.
+  bounds: null                # e.g. {x: [-500, 500], y: [-500, 500], z: [0, 1300]}
+  bounds_pad: 0.02            # margin as a fraction of each extent
+  show_envelope: true         # faint wireframe box around the volume
+  event_fields:               # info panel: label -> h5 key
+    energy: energy
+    nHits_total: nHits_total
+    particle_type: particle_type
+    cerenkov: cerenkovFlag
+    run: run
+    anchor_label: anchor_label
+
+# Class index convention of the training pipeline: 0=electron, 1=pion, 2=muon.
+# `source` = how the automatic method proposes candidates for that class.
+# Drop `source` (or set it to null) to keep a class as a manual-only correction
+# target — that is exactly the case of the electron flag, whose pool is known to
+# be mis-identified at 70 GeV (see configs/anchors.yml).
+classes:
+  - index: 0
+    name: electron
+    color: "#d62728"
+    key: "0"
+    source: {type: flag, field: is_electron}
+  - index: 1
+    name: pion
+    color: "#1f77b4"
+    key: "1"
+    source: {type: flag, field: is_pion}
+  - index: 2
+    name: muon
+    color: "#2ca02c"
+    key: "2"
+    source: {type: flag, field: is_muon}
+  # Multi-particle event (two or more incident particles in the same trigger).
+  # No flag tags it, so it is never auto-proposed: it exists as a MANUAL
+  # correction target -- press `3` on any reviewed event that looks multi-track.
+  # It may or may not end up used for training; labeling it now costs nothing
+  # and cannot be recovered later.
+  - index: 3
+    name: multip
+    color: "#9467bd"
+    key: "3"
+    source: null
+    # Alternatives to a boolean flag:
+    #   source: {type: value, field: particle_type, value: 2}
+    #   source: {type: range, field: energy, min: 25, max: 35}
+    #   source: {type: all}
+
+# Defaults for the sampling panel (editable live in the UI).
+sampling:
+  strategy: nhits_band        # nhits_band | random
+  n_per_class: 25
+  seed: 42
+  window_std: 1.0
+  prefer_unseen: true         # a new round brings never-shown events first
+
+session_path: ../sessions/sdhcal_2012.json     # + .tmp autosave snapshot
+export_dir: ../sessions/exports
+autosave_seconds: 5
