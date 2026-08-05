@@ -69,6 +69,46 @@ function renderClassControls() {
        data-index="${c.index}"> <span class="dot" style="background:${c.color}"></span>${c.name}`;
     filter.appendChild(lab);
   });
+
+  /* Review works off SAVED anchors, so every class is selectable here even the
+   * manual-only ones that can never be sampled: those are precisely the ones
+   * you fill by hand and most want to check afterwards. */
+  const rev = $("review-filter");
+  rev.innerHTML = "<span class='muted'>clases a revisar</span>";
+  S.cfg.classes.forEach((c) => {
+    const lab = document.createElement("label");
+    lab.className = "chip";
+    lab.innerHTML = `<input type="checkbox" checked data-index="${c.index}">
+       <span class="dot" style="background:${c.color}"></span>${c.name}
+       <span class="muted" data-count="${c.index}"></span>`;
+    rev.appendChild(lab);
+  });
+  renderReviewCounts();
+}
+
+/* How many anchors each class currently holds, next to its chip: without it you
+ * cannot tell an empty selection from a class you simply have not labeled yet. */
+function renderReviewCounts() {
+  const per = (S.summary || {}).kept_per_class || {};
+  document.querySelectorAll("#review-filter [data-count]").forEach((el) => {
+    const n = per[el.dataset.count] || 0;
+    el.textContent = n ? `(${n})` : "(0)";
+  });
+}
+
+function renderMode() {
+  const banner = $("mode-banner");
+  const inReview = S.mode === "review";
+  banner.classList.toggle("hidden", !inReview);
+  $("btn-review-exit").classList.toggle("hidden", !inReview);
+  if (inReview) {
+    const cls = ((S.reviewParams || {}).classes || []).map(classNameOf).join(", ");
+    banner.textContent = `revisando guardados${cls ? ": " + cls : ""} (${S.queue.length})`;
+  }
+  // Sampling while parked would throw the parked queue away, so say so up front.
+  $("btn-sample").title = inReview
+    ? "un muestreo nuevo sale del modo revisión y descarta la cola aparcada"
+    : "";
 }
 
 function renderSummary() {
@@ -84,6 +124,7 @@ function renderSummary() {
     <div class="kv"><span>Ignorados</span><b>${s.ignored ?? 0}</b></div>
     <div class="kv"><span>Saltados</span><b>${s.skipped ?? 0}</b></div>
     <div class="per-class">${per}</div>`;
+  renderReviewCounts();
 }
 
 function renderQueue() {
@@ -248,6 +289,16 @@ async function goto(i) {
   await loadEvent(S.queue[S.cursor].index);
 }
 
+/* What Enter confirms: the label ON SCREEN. For an already-saved anchor that is
+ * its saved label, not the original automatic proposal -- otherwise pressing
+ * Enter while reviewing a corrected anchor would put the wrong class back. */
+function confirmLabel() {
+  if (!S.event) return null;
+  const d = S.event.decision;
+  if (d && d.status === "kept" && d.label !== null && d.label !== undefined) return d.label;
+  return S.event.proposed;
+}
+
 async function decide(status, label) {
   if (!S.event) return;
   const index = S.event.index;
@@ -303,6 +354,32 @@ async function sample() {
   }
 }
 
+async function review() {
+  const classes = [...document.querySelectorAll("#review-filter input:checked")]
+    .map((i) => +i.dataset.index);
+  if (!classes.length) { toast("Marca al menos una clase para revisar", "err"); return; }
+  $("btn-review").disabled = true;
+  try {
+    const st = await post("/api/review", { classes, order: $("r-order").value });
+    applyState(st);
+    toast(`Revisando ${st.review_info.n} anchors guardados`, "ok");
+  } catch (e) {
+    toast("No se pudo abrir la revisión: " + e.message, "err");
+  } finally {
+    $("btn-review").disabled = false;
+  }
+}
+
+async function exitReview() {
+  try {
+    const st = await post("/api/review/exit");
+    applyState(st);
+    toast(st.queue.length ? "De vuelta en la cola de muestreo" : "Cola de muestreo vacía: lanza un muestreo", "ok");
+  } catch (e) {
+    toast("No se pudo salir de la revisión: " + e.message, "err");
+  }
+}
+
 async function exportAnchors() {
   const withH5 = confirm("¿Escribir también una copia del h5 con anchor_label?\n\n" +
                          "Aceptar = json + csv + yml + h5\nCancelar = solo json + csv + yml");
@@ -333,7 +410,10 @@ function applyState(st) {
   S.queue = st.queue;
   S.cursor = st.cursor || 0;
   S.summary = st.summary;
+  S.mode = st.mode || null;
+  S.reviewParams = st.review_params || null;
   renderSummary();
+  renderMode();
   renderQueue();
   loadEvent(S.queue.length ? S.queue[Math.min(S.cursor, S.queue.length - 1)].index : null);
 }
@@ -347,7 +427,7 @@ function bindKeys() {
   document.addEventListener("keydown", (e) => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
     const k = e.key.toLowerCase();
-    if (k === "enter" || k === " ") { e.preventDefault(); decide("kept", S.event ? S.event.proposed : null); return; }
+    if (k === "enter" || k === " ") { e.preventDefault(); decide("kept", confirmLabel()); return; }
     if (k === "i") { decide("ignored", null); return; }
     if (k === "s") { decide("skipped", null); return; }
     if (k === "u") { undo(); return; }
@@ -372,6 +452,8 @@ async function init() {
   renderClassControls();
   applyState(st);
   $("btn-sample").onclick = sample;
+  $("btn-review").onclick = review;
+  $("btn-review-exit").onclick = exitReview;
   $("btn-export").onclick = exportAnchors;
   $("btn-save").onclick = async () => { await post("/api/save"); markSaved(); toast("Sesión guardada", "ok"); };
   $("btn-prev").onclick = () => goto(S.cursor - 1);

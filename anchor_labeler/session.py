@@ -198,6 +198,12 @@ class SessionStore:
     def start_round(self, proposals: List[Any], params: Dict[str, Any],
                     stats: List[Dict[str, Any]], append: bool = False) -> None:
         with self._lock:
+            # A fresh sampling round supersedes review mode: the queue it builds
+            # replaces whatever was parked, so keeping the stash would restore a
+            # queue the user has already moved on from.
+            self.state["mode"] = None
+            self.state.pop("queue_stash", None)
+            self.state.pop("review_params", None)
             ri = int(self.state["round_index"]) + 1
             self.state["round_index"] = ri
             self.state["rounds"].append({
@@ -219,6 +225,60 @@ class SessionStore:
                     # a skipped event coming back starts fresh in this round
                     d["round"] = ri
         self._touch()
+
+    # ---- review mode ---------------------------------------------------
+    #
+    # Reviewing already-saved anchors is a QUEUE operation and nothing else:
+    # `decisions` and `proposed_label` are never touched here, so re-reviewing
+    # cannot lose or rewrite what was labeled. The sampling queue you were in
+    # the middle of is parked in `queue_stash` and comes back with
+    # `end_review()`, which is why entering review costs no progress.
+
+    def in_review(self) -> bool:
+        return self.state.get("mode") == "review"
+
+    def begin_review(self, indices: List[int], params: Dict[str, Any]) -> None:
+        with self._lock:
+            if not self.in_review():
+                # Only stash the SAMPLING queue: entering review twice in a row
+                # must not overwrite the parked queue with a review queue.
+                self.state["queue_stash"] = {
+                    "queue": list(self.state["queue"]),
+                    "cursor": int(self.state["cursor"]),
+                }
+            self.state["mode"] = "review"
+            self.state["review_params"] = dict(params)
+            self.state["queue"] = [int(i) for i in indices]
+            self.state["cursor"] = 0
+        self._touch()
+
+    def end_review(self) -> None:
+        with self._lock:
+            stash = self.state.pop("queue_stash", None) or {}
+            self.state["mode"] = None
+            self.state.pop("review_params", None)
+            self.state["queue"] = [int(i) for i in stash.get("queue", [])]
+            n = len(self.state["queue"])
+            self.state["cursor"] = max(0, min(int(stash.get("cursor", 0)), max(0, n - 1)))
+        self._touch()
+
+    def kept_indices(self, labels: Optional[List[int]] = None,
+                     order: str = "class") -> List[int]:
+        """Saved anchors, optionally restricted to some classes.
+
+        order 'class' groups by label then index (review one class at a time);
+        'index' keeps file order (see the events as they sit in the h5).
+        """
+        wanted = None if not labels else {int(x) for x in labels}
+        pairs = [(int(k), int(v["label"]))
+                 for k, v in self.state["decisions"].items()
+                 if v.get("status") == STATUS_KEPT and v.get("label") is not None
+                 and (wanted is None or int(v["label"]) in wanted)]
+        if order == "index":
+            pairs.sort(key=lambda p: p[0])
+        else:
+            pairs.sort(key=lambda p: (p[1], p[0]))
+        return [i for i, _ in pairs]
 
     def set_cursor(self, cursor: int) -> None:
         with self._lock:

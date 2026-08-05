@@ -69,6 +69,9 @@ class Labeler:
             "queue": self.queue_view(),
             "cursor": self.store.state["cursor"],
             "rounds": self.store.state["rounds"][-10:],
+            "mode": self.store.state.get("mode"),
+            "review_params": self.store.state.get("review_params"),
+            "stashed": len((self.store.state.get("queue_stash") or {}).get("queue", [])),
         }
 
     def new_round(self, params: Dict[str, Any], append: bool = False) -> Dict[str, Any]:
@@ -150,6 +153,39 @@ def create_app(cfg: LabelerConfig, session_path: Optional[str] = None) -> Flask:
             payload["round_info"] = info
             return jsonify(payload)
 
+    @app.post("/api/review")
+    def api_review():
+        """Load the already-saved anchors of some classes as the queue.
+
+        Nothing is re-labeled and nothing is dropped: this only swaps the queue,
+        parking the sampling one so /api/review/exit can bring it back.
+        """
+        body = request.get_json(silent=True) or {}
+        raw = body.get("classes")
+        try:
+            labels = None if not raw else [int(c) for c in raw]
+        except (TypeError, ValueError):
+            return jsonify({"error": "classes must be a list of class indices"}), 400
+        if labels is not None:
+            unknown = [c for c in labels if lab.cfg.class_by_index(c) is None]
+            if unknown:
+                return jsonify({"error": f"unknown classes {unknown}"}), 400
+        order = str(body.get("order", "class"))
+        with lab.lock:
+            indices = lab.store.kept_indices(labels, order=order)
+            if not indices:
+                return jsonify({"error": "no hay anchors guardados en esas clases"}), 400
+            lab.store.begin_review(indices, {"classes": labels, "order": order})
+            payload = lab.state_payload()
+            payload["review_info"] = {"n": len(indices), "classes": labels, "order": order}
+            return jsonify(payload)
+
+    @app.post("/api/review/exit")
+    def api_review_exit():
+        with lab.lock:
+            lab.store.end_review()
+            return jsonify(lab.state_payload())
+
     @app.post("/api/decision")
     def api_decision():
         body = request.get_json(silent=True) or {}
@@ -160,7 +196,15 @@ def create_app(cfg: LabelerConfig, session_path: Optional[str] = None) -> Flask:
             return jsonify({"error": "index and status are required"}), 400
         label = body.get("label")
         if status == STATUS_KEPT and label is None:
-            label = lab.store.proposed_label(index)
+            # "Confirm" (Enter) means confirm what is ON SCREEN. For an event
+            # already labeled -- every event in review mode -- that is its saved
+            # label, NOT the original proposal: falling back to the proposal
+            # would silently relabel a corrected anchor back to the automatic
+            # guess the moment someone pressed Enter over it.
+            prev = lab.store.decision(index) or {}
+            label = prev.get("label") if prev.get("status") == STATUS_KEPT else None
+            if label is None:
+                label = lab.store.proposed_label(index)
         if status == STATUS_KEPT:
             if label is None:
                 return jsonify({"error": "no label and no proposal for this event"}), 400

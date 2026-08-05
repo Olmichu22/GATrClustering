@@ -10,6 +10,7 @@
 <header>
   <h1>Anchor labeler <span id="cfg-name" class="muted"></span></h1>
   <div class="header-right">
+    <span id="mode-banner" class="pill review hidden"></span>
     <span id="save-state" class="pill">…</span>
     <button id="btn-save" class="ghost" title="Forzar guardado">Guardar</button>
     <button id="btn-export" class="primary">Exportar anchors</button>
@@ -35,6 +36,22 @@
       <button id="btn-sample" class="primary wide">Nuevo muestreo</button>
       <p class="hint">Los ignorados nunca vuelven. Los saltados y los no vistos sí pueden reaparecer.</p>
       <div id="round-stats" class="stats"></div>
+    </section>
+
+    <section class="card">
+      <h2>Revisar guardados</h2>
+      <div id="review-filter" class="chips"></div>
+      <label>Orden
+        <select id="r-order">
+          <option value="class">por clase, luego índice</option>
+          <option value="index">por índice de evento</option>
+        </select>
+      </label>
+      <button id="btn-review" class="wide">Revisar anchors guardados</button>
+      <button id="btn-review-exit" class="ghost wide hidden">Volver a la cola de muestreo</button>
+      <p class="hint">Carga en la cola los anchors ya guardados de las clases marcadas.
+        No re-etiqueta nada: corrige con las teclas de clase o quita con <kbd>i</kbd>/<kbd>u</kbd>.
+        La cola de muestreo se guarda y vuelve intacta.</p>
     </section>
 
     <section class="card">

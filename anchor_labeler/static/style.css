@@ -70,6 +70,12 @@ kbd { background: #1c2740; border: 1px solid var(--line); border-radius: 4px;
 .tag.skipped { background: #6b7689; }
 .pill { font-size: 11.5px; color: var(--muted); }
 .pill.ok { color: var(--ok); }
+/* Review mode has to be unmistakable: the same buttons mean "edit an existing
+ * anchor" instead of "label a fresh candidate". */
+.pill.review { background: #ff7f0e; color: #06101f; font-weight: 600;
+               border-radius: 999px; padding: 2px 9px; }
+
+.hidden { display: none; }
 
 .queue { display: flex; flex-direction: column; gap: 3px; max-height: calc(100vh - 140px); overflow-y: auto; }
 .qitem { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 5px;
