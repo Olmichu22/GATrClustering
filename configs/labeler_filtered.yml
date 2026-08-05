@@ -18,7 +18,10 @@
 #     class. Decide separately whether it even enters training (`filter_status`
 #     is shown in the info panel for exactly that).
 #
-#  3. A `penetrante` class exists only to SAMPLE the 150-350 hit band. See below.
+#  3. Two extra classes beyond the physics ones: `penetrante` (index 4) exists
+#     only to SAMPLE the 150-350 hit band, and `ruido` (index 5) is where
+#     scattered/unreadable events go. Both are labeling categories, not
+#     necessarily trained clusters -- see the notes on each below.
 #
 # Units note: this file is in cm with a 1-based layer index, not the mm/0-based
 # frame of data/E70GeV_2012.h5. That does NOT matter here -- the labeler only
@@ -110,6 +113,31 @@ classes:
     # class only if the events form their own category; then num_clusters must
     # become 5 and cluster_prior needs a fifth entry.
     source: {type: range, field: nHits_total, min: 150, max: 350}
+
+  - index: 5
+    name: ruido
+    color: "#7f7f7f"
+    key: "5"
+    # Scattered or unreadable signal: hits that do not form a coherent object
+    # (isolated points, a couple of stray layers, an event you cannot honestly
+    # call any of 0-4). Until now such an event had to be dropped with `i`,
+    # which is lossy in a specific way -- it records "not reviewed" and says
+    # nothing, while `ruido` records the positive statement "reviewed, and there
+    # is no particle here". Keep using `i` for what you simply cannot judge.
+    #
+    # Manual-only, like multip: it is a CORRECTION target, not something to
+    # propose. The obvious automatic pool would be particle_type = -1 (281 806
+    # events, 33.8% of the file, median 13 hits), but auto-proposing it would
+    # flood every round with near-empty events and crowd out the classes that
+    # actually need review. Sample it deliberately if you ever want to
+    # characterise it:
+    #   source: {type: value, field: particle_type, value: -1}
+    #
+    # Same caveat as penetrante: this is a labeling category first. Promoting it
+    # to a trained cluster means num_clusters goes to 6 and cluster_prior needs a
+    # sixth entry -- and a noise cluster is probably better handled by EXCLUDING
+    # those events from training than by asking the model to represent them.
+    source: null
 
 sampling:
   # random, not nhits_band: for the class pools the band would draw the middle of
