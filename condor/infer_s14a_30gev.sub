@@ -1,0 +1,25 @@
+# S14a (trained at 70 GeV) predicted over the whole 30 GeV filtered sample.
+#
+#   condor_submit condor/infer_s14a_30gev.sub
+#
+# Same executable, checkpoint and TRAINING stats as condor/infer_s14a.sub -- only
+# the input file changes, which is the point: nHits scales with beam energy, so
+# this measures how far the 70 GeV clusters transfer down to 30 GeV.
+# /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/E30GeV_2012_filtered.h5 belongs to
+# the same "filtered" family as the training file (cm, 1-based layers), so the
+# cfg's hit_affine brings it into the mm training frame unchanged.
+request_gpus = 1
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/infer.sh
+
+environment = "REPO=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering CKPT=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/results/manual_s14a/20260805_135126_s14a_epimu/checkpoints/best-epoch009-acc1.0000.ckpt DATA=/nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/E30GeV_2012_filtered.h5 STATS=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s14a_stats.yml OUT=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/results/manual_s14a/20260805_135126_s14a_epimu/infer_30gev EXPLORER_MAX=6000 PROJECTIONS=pca,proto ANCHORS=configs/anchors_manual_s14a.yml"
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/infer_s14a_30gev.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/infer_s14a_30gev.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/infer_s14a_30gev.err
+
+queue

@@ -1,0 +1,14 @@
+# Cluster -> particle names for the S14a runs (K=3), used ONLY to label plots
+# and the latent-explorer legend (src/evaluate_clustering.py::load_class_names).
+# It marks no anchors: S14a's anchors are the hand-labeled ones already stored in
+# data/manual_s14/E70GeV_2012_filtered_anchors.h5.
+#
+# The default configs/anchors.yml has no entry for cluster 0 (its is_electron
+# flag was dropped as misID), so without this the electron cluster shows up as
+# "cluster 0" in every plot.
+classes:
+  0: is_electron
+  1: is_pion
+  2: is_muon
+
+int_source: null

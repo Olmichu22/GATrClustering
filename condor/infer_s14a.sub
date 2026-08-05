@@ -1,0 +1,24 @@
+# Full-train inference for S14a: best checkpoint of run 20260805_135126_s14a_epimu
+# predicted over ALL 833k events of the training file (no split, no filter).
+#
+#   condor_submit condor/infer_s14a.sub
+#
+# REPO is passed explicitly because Condor SPOOLS the executable: at run time the
+# script sits in /var/lib/condor/spool/... and cannot locate the checkout itself.
+# The job's own console log is OUT/infer.log -- Condor's stdout/stderr come back
+# to that same spool dir, which is not readable from the submit host.
+request_gpus = 1
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/infer.sh
+
+environment = "REPO=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering CKPT=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/results/manual_s14a/20260805_135126_s14a_epimu/checkpoints/best-epoch009-acc1.0000.ckpt DATA=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s14/E70GeV_2012_filtered_anchors.h5 STATS=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s14a_stats.yml OUT=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/results/manual_s14a/20260805_135126_s14a_epimu/infer_train EXPLORER_MAX=6000 PROJECTIONS=pca,proto ANCHORS=configs/anchors_manual_s14a.yml"
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/infer_s14a.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/infer_s14a.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/infer_s14a.err
+
+queue
