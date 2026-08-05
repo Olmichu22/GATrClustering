@@ -1,0 +1,79 @@
+# ============================================================
+# SiW-ECAL (TB2026 CERN) valtree ROOT -> flat HDF5 (CSR) export config.
+#
+# DETECTOR SEPARATION: everything SiW-ECAL lives under configs/siwecal/ and
+# writes to /nfs/cms/arqolmo/SiWECALTB2026/Converted/ -- never mix with the
+# SDHCAL files under data/ or /nfs/cms/arqolmo/SDHCAL_Energy/data/.
+#
+# Source format (ecal_TB2026CERN_run_000044.valtree.root, tree `ecal`):
+#   - 15 slabs (hit_slab 0..14, already 0-based). z in mm from 0 to -225 and
+#     INVERTED: the beam enters at slab 0 = z=0 and depth grows toward negative
+#     z (slab 14 = z=-225). Pitch 15 mm with one 30 mm gap between slabs 10 and
+#     11 (z=-150 -> -180). `k` (hit_slab) is the natural depth coordinate.
+#   - x,y in mm, 32x32 pads of 5.53 mm, extent +-86.325 mm.
+#   - hit_energy is ANALOG, MIP-calibrated (min 0.5 = half-MIP cut) -- there is
+#     no SDHCAL-style threshold branch, hence normalize_thr: false and no `thr`.
+#   - The file carries two tree cycles (ecal;36, ecal;37 = ROOT autosave);
+#     uproot's `f["ecal"]` picks the latest full cycle, which is correct.
+#
+# Usage:
+#   source /cvmfs/sw.hsf.org/key4hep/setup.sh
+#   python -m src.convert.root_to_flat_h5 \
+#       --config configs/siwecal/export_valtree.yml \
+#       --inputs /nfs/cms/arqolmo/SiWECALTB2026/Data/ecal_TB2026CERN_run_000044.valtree.root \
+#       --output /nfs/cms/arqolmo/SiWECALTB2026/Converted/run44_34GeV.h5
+# ============================================================
+
+tree: ecal
+
+# ----- per-hit branches -----
+# `e` replaces SDHCAL's `thr` as the per-hit amplitude (continuous, in MIPs).
+hit:
+  x: hit_x
+  y: hit_y
+  z: hit_z
+  k: hit_slab
+  e: hit_energy
+
+# ----- per-event scalars -----
+# Kept generously: this run is also for EXPLORING what the sample contains, and
+# these are the discriminants the labeler will propose pools from.
+event:
+  run: run
+  event: event
+  spill: spill
+  bcid: bcid
+  nHits_total: nhit            # double in the tree; logical name matches SDHCAL
+  energy_sum: sum_energy       # plain sum of hit energies (MIPs)
+  energy_reco: energy          # weighted-energy estimate
+  mip_likeness: mip_likeness   # high => MIP-like (muon candidate)
+  is_shower: is_shower
+  shower_start: shower_start
+  shower_max: shower_max
+  shower_length: shower_length
+  first_layer: first_layer
+  last_layer: last_layer
+  n_layers_hit: n_layers_hit
+  e_over_nhit: e_over_nhit
+  zbary: zbary
+  bar_x: bar_x
+  bar_y: bar_y
+  moliere: moliere
+  transverse_rms: transverse_rms
+
+# All 15 slabs kept (max_layer applies only when the config that runs has the
+# uncommitted max_layer feature; absent here on purpose).
+
+# No threshold branch in this detector.
+normalize_thr: false
+
+anchor:
+  mode: none
+  branch: null
+
+hit_dtypes:
+  x: float32
+  y: float32
+  z: float32
+  k: int32
+  e: float32

@@ -1,0 +1,129 @@
+# ============================================================
+# Anchor labeler — SiW-ECAL TB2026 run 44 (34 GeV, 149 544 events).
+#
+#   bash run_labeler.sh --config configs/siwecal/labeler_run44.yml --port 8060
+#
+# NEW DETECTOR, SEPARATE EXPERIMENT LINE: this is the first SiW-ECAL sample.
+# Port 8060+ is reserved for SiW-ECAL labelers (8050-8052 are SDHCAL) and the
+# session/export files carry a `siwecal_` prefix so nothing can be confused
+# with the SDHCAL 2012/2016 sessions.
+#
+# What is different from the SDHCAL labelers:
+#   - No particle_type / is_electron flags at all: this run has no per-event
+#     truth. Pools come from reconstruction-level discriminants instead:
+#       * is_shower (97% of events!) -> shower pool, mostly the beam particle.
+#       * mip_likeness high -> MIP/muon pool (p75 is 0.15; >0.30 is the tail).
+#     Everything else is manual. The FIRST purpose of this session is
+#     exploratory: see what a 34 GeV SiW-ECAL run actually contains.
+#   - Per-hit color is the ANALOG energy in MIPs (`e`), not a 3-level thr.
+#   - Only 15 layers (hit_slab 0..14); beam axis is z but INVERTED: the beam
+#     enters at slab 0 = z=0 and depth grows toward negative z (slab 14 =
+#     z=-225, 30 mm gap between slabs 10/11). x,y in mm, +-86.325, pads of
+#     5.53 mm. Use `layer` in the hover to read depth directly.
+#
+# Units note: the h5 is already in mm with 0-based layers, i.e. NO hit_affine
+# is needed for display. Whether the TRAINING config needs an affine to share
+# a frame with SDHCAL is a later decision (different detector, likely separate
+# training anyway).
+# ============================================================
+
+name: SiW-ECAL TB2026 run44 (149k, 34 GeV)
+
+dataset:
+  backend: hdf5_flat
+  path: /nfs/cms/arqolmo/SiWECALTB2026/Converted/run44_34GeV.h5
+  offsets: offsets
+  coords: {x: x, y: y, z: z}
+  beam_axis: z
+  hit_color_field: e
+  hit_color_label: "E (MIP)"
+  hit_extra_fields:
+    layer: k
+  nhits_field: nHits_total
+
+  # Pinned (file extents in mm, padded): 32x32 pads of 5.53 mm, 15 slabs.
+  bounds:
+    x: [-90.0, 90.0]
+    y: [-90.0, 90.0]
+    z: [-230.0, 5.0]
+  bounds_pad: 0.0
+  show_envelope: true
+
+  event_fields:
+    nHits_total: nHits_total
+    energy_sum: energy_sum
+    energy_reco: energy_reco
+    mip_likeness: mip_likeness
+    is_shower: is_shower
+    shower_start: shower_start
+    shower_max: shower_max
+    shower_length: shower_length
+    first_layer: first_layer
+    last_layer: last_layer
+    n_layers_hit: n_layers_hit
+    e_over_nhit: e_over_nhit
+    moliere: moliere
+    transverse_rms: transverse_rms
+    spill: spill
+    bcid: bcid
+
+# Same index convention as SDHCAL (0=electron, 1=pion, 2=muon, 3=multip) so a
+# joint or comparative analysis never has to remap labels. `ruido` closes the
+# list as the reviewed-and-empty category, as in labeler_filtered.yml.
+classes:
+  - index: 0
+    name: electron
+    color: "#d62728"
+    key: "0"
+    # 34 GeV beam into an ECAL: the shower pool should be dominated by the beam
+    # electrons. is_shower is true for 97% of events, so this pool is nearly
+    # the whole file -- the class assignment still has to be confirmed by eye
+    # (early shower_start, contained, Moliere-sized).
+    source: {type: value, field: is_shower, value: 1}
+
+  - index: 1
+    name: pion
+    color: "#1f77b4"
+    key: "1"
+    # No flag distinguishes hadrons here and 15 X0-ish of ECAL rarely contains
+    # them: expect late/irregular showers or MIP+kink topologies. Manual-only
+    # until we know whether the run even has a hadron component.
+    source: null
+
+  - index: 2
+    name: muon
+    color: "#2ca02c"
+    key: "2"
+    # mip_likeness p75 = 0.15, max 0.52 on this run; > 0.30 selects the
+    # MIP-like tail (straight low-energy track through all slabs).
+    source: {type: range, field: mip_likeness, min: 0.30, max: 1.0}
+
+  - index: 3
+    name: multip
+    color: "#9467bd"
+    key: "3"
+    source: null
+
+  - index: 4
+    name: ruido
+    color: "#7f7f7f"
+    key: "4"
+    # Reviewed and not a coherent particle. Manual-only; use `i` for events you
+    # simply cannot judge.
+    source: null
+
+sampling:
+  strategy: random
+  n_per_class: 30
+  seed: 42
+  window_std: 1.0
+  prefer_unseen: true
+
+session_path: ../sessions/siwecal_run44.json
+export_dir: ../sessions/exports
+
+autosave_seconds: 5
+
+# Run 44 will likely BE a training file, so anchors belong in anchor_label /
+# mark_anchors, not per-class subset files.
+export_subsets: false
