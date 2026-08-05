@@ -24,6 +24,46 @@ from src.evaluate_clustering import (load_ckpt, load_class_names, plot_projectio
 from src import projections
 
 
+def print_crosstab(cluster, ptype, anchor, nhit, fstatus, K, class_names):
+    """Console cross-tab over EVERY event.
+
+    No filter_status cut and no anchor cut: s14* trains on the whole file
+    (`filters` is commented out in those configs), so reporting only
+    status==1 non-anchors described a different population than the one the
+    model saw -- and the per-cluster counts did not add up to the total.
+    particle_type = -1 ("unlab") gets its own row rather than being dropped: it
+    is a third of the file and the model had to put it somewhere.
+
+    filter_status is still stored per event in the npz, so a filtered view can
+    be recomputed later without re-running the inference.
+    """
+    names = {-1: "unlab", 0: "e", 1: "pi", 2: "mu"}
+    lab = {k: (class_names[k] or f"c{k}") for k in range(K)}
+    n_anc = int((anchor >= 0).sum())
+    print(f"[infer] cross-tab over ALL {len(cluster)} events "
+          f"(no status cut; includes {n_anc} anchors, which the model saw labeled; "
+          f"{int((fstatus != 1).sum())} events have filter_status != 1)")
+    print("[infer] recall -- where each particle_type goes:")
+    for p in sorted(np.unique(ptype)):
+        s = ptype == p
+        u, c = np.unique(cluster[s], return_counts=True)
+        frac = {lab.get(int(k), int(k)): round(float(v) / int(s.sum()), 3)
+                for k, v in zip(u, c)}
+        print(f"  {names.get(int(p), int(p)):>5} (N={int(s.sum())}, "
+              f"nHits p50={np.median(nhit[s]):.0f}): {frac}")
+    print("[infer] precision -- what each cluster is made of:")
+    for k in range(K):
+        s = cluster == k
+        if not s.any():
+            print(f"  cluster {k} ({lab[k]}): EMPTY")
+            continue
+        u, c = np.unique(ptype[s], return_counts=True)
+        comp = {names.get(int(p), int(p)): round(float(v) / int(s.sum()), 3)
+                for p, v in zip(u, c)}
+        print(f"  cluster {k} ({lab[k]}, N={int(s.sum())}, "
+              f"nHits p50={np.median(nhit[s]):.0f}): {comp}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--ckpt", required=True)
@@ -135,15 +175,9 @@ def main():
                                K, class_names, a.explorer_out,
                                max_events=a.explorer_max_events, projs=projs,
                                sel=sel)
-    # quick console cross-tab (status==1, non-anchor)
-    m = (fstatus == 1) & (anchor < 0)
-    print(f"[infer] status==1 & non-anchor: {int(m.sum())} events")
-    for pt, name in [(0, "e"), (1, "pi"), (2, "mu")]:
-        sel = m & (ptype == pt)
-        if sel.sum():
-            u, c = np.unique(cluster[sel], return_counts=True)
-            frac = {int(k): round(float(v) / sel.sum(), 3) for k, v in zip(u, c)}
-            print(f"  {name} (N={int(sel.sum())}): cluster share {frac}")
+    K = int(cfg["model"]["head"]["num_clusters"])
+    print_crosstab(cluster, ptype, anchor, nhit, fstatus, K,
+                   load_class_names(a.anchors, K))
 
 
 if __name__ == "__main__":
