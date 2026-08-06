@@ -28,6 +28,13 @@ else
     export SINGULARITYENV_WANDB_MODE="${WANDB_MODE:-online}"
 fi
 
+# Hilos intra-op de torch/BLAS. HTCondor exporta OMP_NUM_THREADS con el valor de
+# request_cpus (1 por defecto), aunque el límite real de CPU del job sea blando
+# (medido en gaew0120: nproc=1 pero Cpus_allowed_list=0-255, cpu.max sin cuota).
+# Se propaga explícitamente al contenedor para no depender de que apptainer
+# herede el entorno del host.
+export SINGULARITYENV_OMP_NUM_THREADS="${OMP_NUM_THREADS:-8}"
+
 CFG="${CFG:-configs/sim_anchors.yml}"
 DATA="${DATA:-$REPO/data/E70GeV_2012.h5}"
 OUT="${OUT:-results/poc_run1}"

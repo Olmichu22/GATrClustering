@@ -586,8 +586,15 @@ def train(cfg: dict, resume_from: str = None):
     n_cpu = available_cpus()
     if nw > n_cpu:
         print(f"[loader] AVISO: train.num_workers = {nw} con solo {n_cpu} CPU(s) "
-              f"asignada(s). Los workers se reparten un mismo core; sube "
-              f"request_cpus en el .sub de Condor (default 1).")
+              f"en la máscara de afinidad. Los workers se repartirían esos cores.")
+    # OMP_NUM_THREADS lo exporta HTCondor con el valor de request_cpus (1 por
+    # defecto) y lo heredan torch y BLAS: el paralelismo intra-op se queda en un
+    # hilo aunque la afinidad permita cientos de cores (medido: nproc=1 con
+    # Cpus_allowed_list 0-255). No es fatal, pero conviene verlo en el log.
+    omp = os.environ.get("OMP_NUM_THREADS")
+    print(f"[loader] num_workers={nw} | cpus en afinidad={n_cpu} | "
+          f"OMP_NUM_THREADS={omp or '<sin fijar>'} | "
+          f"torch.get_num_threads()={torch.get_num_threads()}")
     train_loader = DataLoader(
         train_ds, batch_size=tcfg["batch_size"], shuffle=True,
         num_workers=nw, drop_last=True,
@@ -649,13 +656,24 @@ def train(cfg: dict, resume_from: str = None):
         ),
     ]
 
-    # ----- early stopping on val loss (patience counted in validation checks) --
+    # ----- early stopping (patience counted in validation checks) -------------
+    # El monitor era FIJO en `val/loss` mientras el checkpoint se seleccionaba por
+    # `ckpt_monitor` (accuracy held-out). Ese desajuste cortó el run s15 en la
+    # época 5 de 15: `val/loss` deja de bajar en cuanto entra el término del prior
+    # (warmup 3->12) y acaba el warmup de LR, mientras la accuracy seguía subiendo
+    # con fuerza (0.488 -> 0.711). Ahora es configurable; por defecto sigue siendo
+    # `val/loss`/min, así que ningún config anterior cambia de comportamiento.
+    #   train.early_stop_monitor: val/heldout_anchor_acc
+    #   train.early_stop_mode: max
     es_patience = tcfg.get("early_stop_patience", 0)
+    es_monitor = tcfg.get("early_stop_monitor", "val/loss")
+    es_mode = tcfg.get("early_stop_mode", "max" if "acc" in es_monitor else "min")
     if es_patience and es_patience > 0:
+        print(f"[early_stop] monitor={es_monitor} mode={es_mode} patience={es_patience}")
         callbacks.append(
             ResumableEarlyStopping(
-                monitor="val/loss",
-                mode="min",
+                monitor=es_monitor,
+                mode=es_mode,
                 patience=int(es_patience),
                 min_delta=float(tcfg.get("early_stop_min_delta", 0.0)),
                 check_finite=True,

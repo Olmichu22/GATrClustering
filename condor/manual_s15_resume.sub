@@ -1,0 +1,44 @@
+# HTCondor submit para REANUDAR s15 desde el mejor checkpoint del primer intento.
+#
+#   condor_submit condor/manual_s15_resume.sub
+#
+# Por qué existe este fichero y no se reusa manual_s15.sub: aquel arranca de cero
+# y debe seguir haciéndolo (es el run reproducible). Este solo añade RESUME.
+#
+# El primer intento (cluster 117521) murió en la época 5 de 15 por early stopping
+# sobre `val/loss`, que era un monitor FIJO en el código mientras el checkpoint se
+# seleccionaba por accuracy held-out. Arreglado en configs/manual_s15.yml
+# (early_stop_monitor: val/heldout_anchor_acc, mode max), así que al reanudar el
+# criterio de parada ya es el mismo que el de selección.
+#
+# Qué restaura Lightning con --resume: pesos, optimizador, scheduler y el CONTADOR
+# DE ÉPOCAS. Es decir, sigue en la 6 y llega hasta la 15 del config: nueve épocas
+# más, con la curva de coseno del LR intacta. El estado del EarlyStopping NO se
+# hereda, porque su state_key incluye el monitor y el monitor ha cambiado — que es
+# justo lo que hace falta: si se heredase, compararía la accuracy contra el mejor
+# `val/loss` (~2.9) y pararía de inmediato.
+#
+# Las estadísticas de escalado ya existen en data/manual_s15_stats.yml, así que se
+# reutilizan y el modelo ve exactamente la misma normalización que en la época 5.
+# W&B continúa el MISMO run (el id se autodetecta del directorio del checkpoint).
+request_gpus = 2
+
+# 202.8 M hits en RAM entre las tres fuentes, igual que en el run original.
+request_memory = 32768
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/train.sh
+
+# OMP_NUM_THREADS: ver la nota en condor/manual_s15.sub. El límite de CPU del job
+# es blando (Cpus_allowed_list = 0-255), pero Condor fija OMP_NUM_THREADS al valor
+# de request_cpus y torch/BLAS lo heredan.
+environment = "CFG=configs/manual_s15.yml DATA=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s15/E70GeV_2012_filtered_anchors.h5 OUT=results/manual_s15 EPOCHS=15 OMP_NUM_THREADS=8 RESUME=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/results/manual_s15/20260806_131255_s15_mixed_energy/checkpoints/best-epoch005-acc0.7113.ckpt"
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s15_resume.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s15_resume.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s15_resume.err
+
+queue

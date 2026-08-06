@@ -23,7 +23,12 @@ requirements = TARGET.Machine == "gaew0120.ciemat.es"
 
 executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/train.sh
 
-environment = "CFG=configs/manual_s15.yml DATA=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s15/E70GeV_2012_filtered_anchors.h5 OUT=results/manual_s15 EPOCHS=15"
+# OMP_NUM_THREADS: HTCondor lo exporta con el valor de request_cpus (1 por
+# defecto) y lo heredan torch y BLAS, así que el paralelismo intra-op se queda en
+# un hilo. Medido en gaew0120 dentro de este mismo job: nproc = 1 pero
+# Cpus_allowed_list = 0-255 y cpu.max = "max 100000", es decir, el límite de CPU
+# es BLANDO y los cores están ahí. Por eso se fija aquí y no se toca request_cpus.
+environment = "CFG=configs/manual_s15.yml DATA=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s15/E70GeV_2012_filtered_anchors.h5 OUT=results/manual_s15 EPOCHS=15 OMP_NUM_THREADS=8"
 
 output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s15.out
 log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s15.log

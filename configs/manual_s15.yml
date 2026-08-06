@@ -246,6 +246,14 @@ train:
   # el mixto generaliza (val/heldout_anchor_acc_worst_group).
   ckpt_monitor: val/heldout_anchor_acc
   ckpt_save_top_k: 2
+  # El early stopping vigila LO MISMO que el checkpoint. Con el default anterior
+  # (`val/loss`, fijo en el código) el primer intento de este run murió en la
+  # época 5 de 15: la pérdida de validación deja de bajar en cuanto entra el
+  # término del prior (warmup 3->12) y acaba el warmup de LR, mientras la
+  # accuracy held-out seguía subiendo con fuerza (0.488 -> 0.711). Parar por la
+  # pérdida mientras se selecciona por accuracy es contradictorio.
+  early_stop_monitor: val/heldout_anchor_acc
+  early_stop_mode: max
   early_stop_patience: 5
   early_stop_min_delta: 0.0
   wandb:

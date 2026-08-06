@@ -46,13 +46,16 @@ def available_cpus() -> int:
         return max(1, os.cpu_count() or 1)
 
 
-#: The default is CAPPED by the cores the job really has. Under HTCondor that
-#: comes from `request_cpus` in the .sub, whose default is 1: measured on the
-#: s15 run (117521), `nproc` = 1 while GPU utilization fluctuated 40-91%.
-#: Spawning 8 workers on one core would only add context switching on top of the
-#: starvation, so asking for more workers than cores is never the answer -- the
-#: fix for that is `request_cpus`. An explicit `train.num_workers` in the config
-#: still wins over this default.
+#: The default is CAPPED by the cores this process may actually run on. Note the
+#: cap reads the AFFINITY MASK, not `nproc`: measured on gaew0120 inside a job of
+#: condor/manual_s15.sub, `nproc` reports 1 while `Cpus_allowed_list` is 0-255 and
+#: `cpu.max` is `max 100000` (no quota). `nproc` is not lying about the affinity
+#: -- it honors OMP_NUM_THREADS, which HTCondor exports as `request_cpus`
+#: (default 1). So the CPU limit here is SOFT: the workers, being separate
+#: processes, do get real cores. What OMP_NUM_THREADS does throttle is the
+#: intra-op thread pool of torch/BLAS inside each process, and the fix for that
+#: is exporting OMP_NUM_THREADS in the job environment, not `request_cpus`.
+#: An explicit `train.num_workers` in the config still wins over this default.
 DEFAULT_NUM_WORKERS = min(_TARGET_NUM_WORKERS, available_cpus())
 
 
