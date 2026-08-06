@@ -67,6 +67,8 @@ def read_one_file(path: str, cfg: dict) -> Dict[str, object]:
     tree_name = cfg["tree"]
     hit_map: Dict[str, str] = cfg["hit"]
     event_map: Dict[str, str] = cfg.get("event", {}) or {}
+    max_layer = cfg.get("max_layer")
+    layer_logical = cfg.get("layer_logical", "k")
 
     with uproot.open(path) as f:
         tree = f[tree_name]
@@ -79,6 +81,23 @@ def read_one_file(path: str, cfg: dict) -> Dict[str, object]:
                 )
         hit_jagged = {lg: tree[br].array(library="np") for lg, br in hit_map.items()}
         event_arrays = {lg: np.asarray(tree[br].array(library="np")) for lg, br in event_map.items()}
+
+    if max_layer is not None:
+        if layer_logical not in hit_jagged:
+            raise KeyError(
+                f"max_layer={max_layer} requires the layer field '{layer_logical}' "
+                f"to be exported (see 'hit' map / 'layer_logical' in the config)"
+            )
+        hit_jagged = {lg: [np.asarray(v) for v in arr] for lg, arr in hit_jagged.items()}
+        n_dropped = 0
+        for ev in range(len(hit_jagged[layer_logical])):
+            mask = hit_jagged[layer_logical][ev] <= max_layer
+            if mask.all():
+                continue
+            n_dropped += int((~mask).sum())
+            for lg in hit_jagged:
+                hit_jagged[lg][ev] = hit_jagged[lg][ev][mask]
+        print(f"[convert]   max_layer={max_layer}: dropped {n_dropped} hits in {path}")
 
     # per-event hit counts from a reference hit branch; verify consistency
     ref = next(iter(hit_jagged))
@@ -157,12 +176,21 @@ def main():
     ap.add_argument("--inputs", nargs="+", required=True, help="one or more ROOT files")
     ap.add_argument("--output", required=True)
     ap.add_argument("--tree", default=None, help="override tree name")
+    ap.add_argument(
+        "--max-layer",
+        type=int,
+        default=None,
+        help="keep only hits with layer <= MAX_LAYER (0-based, inclusive); "
+        "overrides 'max_layer' in the config",
+    )
     args = ap.parse_args()
 
     with open(args.config) as fh:
         cfg = yaml.safe_load(fh)
     if args.tree:
         cfg["tree"] = args.tree
+    if args.max_layer is not None:
+        cfg["max_layer"] = args.max_layer
     convert(args.inputs, args.output, cfg)
 
 

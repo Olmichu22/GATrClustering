@@ -20,6 +20,7 @@ Two modes (config: ``configs/anchors.yml``):
 
 Usage:
     python -m src.convert.mark_anchors --h5 data/E70GeV_2016.h5 --config configs/anchors.yml
+    python -m src.convert.mark_anchors --h5 data/E70GeV_2016.h5 --clear   # all -> -1
 """
 
 from __future__ import annotations
@@ -72,6 +73,21 @@ def sample_near_mean(nhits: np.ndarray, candidates: np.ndarray, n: int,
     return rng.choice(pool, size=n, replace=False)
 
 
+def clear(h5_path: str) -> None:
+    """Reset every ``anchor_label`` to -1 (TB fully unlabeled). No config needed.
+
+    Use when anchors come from a separate file (e.g. simulation-as-anchors, see
+    configs/sim_anchors.yml): the test-beam file should carry no labels.
+    """
+    with h5py.File(h5_path, "r+") as f:
+        n_events = len(f["offsets"]) - 1
+        anchor = -np.ones(n_events, dtype=np.int64)
+        if "anchor_label" in f:
+            del f["anchor_label"]
+        f.create_dataset("anchor_label", data=anchor, compression="lzf")
+        print(f"[anchors] cleared: all {n_events} events set to anchor_label=-1")
+
+
 def mark(h5_path: str, cfg: dict) -> None:
     with h5py.File(h5_path, "r+") as f:
         n_events = len(f["offsets"]) - 1
@@ -111,11 +127,20 @@ def mark(h5_path: str, cfg: dict) -> None:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--h5", required=True)
-    ap.add_argument("--config", required=True)
+    ap.add_argument("--config", default=None,
+                    help="anchor config (required unless --clear)")
+    ap.add_argument("--clear", action="store_true",
+                    help="reset ALL anchor_label to -1 (fully unlabeled); ignores --config")
     ap.add_argument("--seed", type=int, default=None, help="override seed")
     ap.add_argument("--n_per_class", type=int, default=None)
     args = ap.parse_args()
 
+    if args.clear:
+        clear(args.h5)
+        return
+
+    if not args.config:
+        ap.error("--config is required unless --clear is given")
     with open(args.config) as fh:
         cfg = yaml.safe_load(fh)
     if args.seed is not None:
