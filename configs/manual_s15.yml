@@ -27,8 +27,11 @@
 #     modelo no puede saber si un evento de 400 hits es un pión de 30 GeV o algo
 #     intermedio de 70. Es exactamente el fallo ya documentado (un modelo de
 #     70 GeV aplicado a 30 manda el 68% de los piones a muones), solo que ahora
-#     ocurriría dentro del mismo batch. Mínimo viable: escalar global concatenado
-#     a la entrada escalar de GATr (se difunde por hit en feature_routing).
+#     ocurriría dentro del mismo batch. Entra como escalar GLOBAL: concatenado
+#     al embedding del evento DESPUÉS del pooling, al lado de la densidad
+#     (model.aggregation.global_scalars: [density, energy]). No se difunde por
+#     hit a la entrada del encoder — esa vía es features.extra_event_scalars,
+#     que aquí se deja vacía.
 #
 #  3. SPLIT Y MÉTRICA POR (CLASE, ENERGÍA) (`data.stratify_split`). Con anchors
 #     de dos energías, estratificar solo por clase puede dejar todos los
@@ -124,7 +127,10 @@ features:
   mv_scalar: [thr]
   scalars: []
   thr_encoding: ordinal
-  extra_event_scalars: [energy]   # <-- el cambio 2
+  # VACÍO a propósito: `extra_event_scalars` difunde el valor por evento a CADA
+  # hit y lo mete en la entrada escalar del ENCODER. La energía no entra por ahí
+  # sino como escalar GLOBAL, en el pooling (model.aggregation.global_scalars).
+  extra_event_scalars: []
 
 # ----- Escalado (estadísticas ONLINE sobre el split de train) -----
 # Ruta nueva: la población cambia (2.43M eventos de dos energías), reutilizar las
@@ -156,10 +162,26 @@ model:
     dropout: 0.2
     mv_embedding_mode: centroid
   aggregation:
-    type: attention_density
+    type: attention_global
     num_seeds: 2
     num_heads: 4
     dropout: 0.0
+    # Escalares GLOBALES (por evento) concatenados al embedding tras el pooling,
+    # junto a la rama de magnitud (suma de tokens / sqrt(n), D dims, siempre
+    # presente). Disponibles: density | log_nhits | energy | cualquier campo por
+    # evento del batch.
+    #   density  -> lo que ya usaba s14a (attention_density = [density]).
+    #   energy   -> el cambio de s15: condiciona el embedding del evento sin
+    #               decorar cada hit. Entra ya escalada (scaling.features.energy).
+    #   log_nhits-> lo que usaba attention_card (s9b/planb). NO se añade aquí a
+    #               propósito: cambiaría dos cosas a la vez respecto a s14a, y
+    #               nHits crece con la profundidad del shower, que es justo lo que
+    #               la densidad evita. Añádelo a la lista si lo quieres probar,
+    #               pero entonces pon separate_norm: false (entra a escala ~7 sin
+    #               normalizar) o mide su escala antes.
+    global_scalars: [density, energy]
+    # LayerNorm(D) solo en la rama de magnitud; los escalares se concatenan sin
+    # tocar porque ya vienen escalados por FeatureScaler.
     separate_norm: true
   head:
     proj_dim: 64

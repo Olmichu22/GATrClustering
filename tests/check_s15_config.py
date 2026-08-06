@@ -65,9 +65,14 @@ for name, path, aff in sources:
 print("\n=== coherencia del config ===")
 check("stratify_split incluye clase y energia",
       set(data.get("stratify_split") or []) == {"anchor", "energy"})
-check("energy es feature del modelo",
-      "energy" in (cfg["features"].get("extra_event_scalars") or []))
+agg = cfg["model"]["aggregation"]
+gs = agg.get("global_scalars") or []
+check("energy entra como escalar GLOBAL (pooling), no difundida por hit",
+      "energy" in gs and "energy" not in (cfg["features"].get("extra_event_scalars") or []),
+      "global_scalars=%s  extra_event_scalars=%s" % (gs, cfg["features"].get("extra_event_scalars")))
+check("la densidad sigue estando", "density" in gs)
 check("energy tiene modo de escalado", "energy" in cfg["scaling"]["features"])
+check("separate_norm con escalares ya escalados", agg.get("separate_norm") is True)
 check("K = 3", cfg["model"]["head"]["num_clusters"] == 3)
 check("prior con 3 componentes que suman ~1",
       abs(sum(cfg["loss"]["cluster_prior"]) - 1.0) < 1e-6)

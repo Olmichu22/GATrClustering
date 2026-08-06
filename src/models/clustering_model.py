@@ -16,7 +16,7 @@ from ..data.feature_routing import (
     compute_in_mv_channels,
     compute_in_s_channels,
 )
-from .aggregation import AttentionDensityPooling, build_aggregation
+from .aggregation import AttentionGlobalPooling, build_aggregation
 from .gatr_module import GATrEncoder
 from .prototype_head import PrototypeHead
 
@@ -60,12 +60,19 @@ class ClusteringModel(nn.Module):
         # Per-hit layer index (k), used only by density-aware aggregation to
         # normalize nHits by the number of active layers; ignored otherwise.
         layer = getattr(batch, "k", None)
-        # Pre-scaled per-event density (hits/active layer), when the dataset
-        # provides it: density-aware pooling prefers it over recomputing a raw,
-        # unnormalized ratio. Other aggregations do not accept the kwarg.
-        density = getattr(batch, "density", None)
-        if density is not None and isinstance(self.aggregation, AttentionDensityPooling):
-            return self.aggregation(tokens, inp["batch_idx"], layer=layer, density=density)
+        # Per-event (global) scalars requested by the aggregation, resolved BY
+        # NAME off the batch: `density` and `energy` arrive already scaled by
+        # FeatureScaler, which is where scaling belongs. A name the batch does
+        # not carry is left out and the pooling derives it (log_nhits, or density
+        # from the layer index) or raises. Other aggregations take no scalars.
+        if isinstance(self.aggregation, AttentionGlobalPooling):
+            event_scalars = {}
+            for name in self.aggregation.global_scalars:
+                val = getattr(batch, name, None)
+                if val is not None:
+                    event_scalars[name] = val
+            return self.aggregation(tokens, inp["batch_idx"], layer=layer,
+                                    event_scalars=event_scalars)
         return self.aggregation(tokens, inp["batch_idx"], layer=layer)  # (B, agg_out_dim)
 
     def forward(self, batch):
