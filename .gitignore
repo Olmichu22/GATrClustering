@@ -239,6 +239,7 @@ condor/*.err
 # mano, pocos KB); los exports son h5/csv derivados de 100+ MB.
 sessions/exports/
 sessions/*.json.tmp
+configs/sessions/*.json.tmp
 
 # Estado local del agente / worktrees
 .claude/
