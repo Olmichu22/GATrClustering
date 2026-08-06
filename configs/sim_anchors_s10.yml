@@ -1,0 +1,218 @@
+# ============================================================
+# S10 = S9 (dedicated e-beam anchors, thr1<->thr2 swap fixed) with ONE change:
+# aggregation.type attention_card -> attention_density. The size scalar in the
+# pooling is now DENSITY (hits per ACTIVE LAYER = nHits / n_distinct_layers)
+# instead of log1p(nHits). Rationale: raw nHits grows with detector DEPTH (how
+# many layers a shower crosses) -- a give-away tied to the number of layers.
+# Density measures transverse COMPACTNESS independently of depth, making the
+# event descriptor agnostic to the number of layers. Per-hit layer index k is
+# threaded to the pooling (clustering_model.encode_event). 3 seeds: s10/s10b/s10c
+# = 42/123/777, to compare precision/recall robustness against the s9 study.
+# ------------------------------------------------------------
+# ============================================================
+# S9: RE-TEST the dedicated 70 GeV electron-beam anchors (TB 2012, e-only) with
+# the thr1<->thr2 swap CORRECTED. Base = s6 (in-domain pi/mu from primary, no
+# sim); the ONLY change is the electron anchor SOURCE: dedicated e-beam
+# (thr-fixed) instead of the 129 in-domain showers. Rationale in the
+# anchor_datasets block below. Below: the s6 rationale, kept for context.
+# ------------------------------------------------------------
+# Why (s6): s5 kept the electron anchor in-domain (that FIXED the latent island,
+# eval/pca_z.png shows cluster 0 finally populated & attached to the TB cloud)
+# but STILL used out-of-domain SIMULATION for pion/muon (200 each). The sim<->TB
+# domain gap is a trivial give-away the model memorizes instead of learning
+# physics -> the overfitting we still see in s5:
+#     train loss/total 0.19 (ce 0.08) vs val/loss 2.94 ; heldout_anchor_acc 0.50
+#     (was 0.975 in s4), electron prototype drifting into the muon cloud in the
+#     TRAIN-time PCA (pca/epoch_079.png).
+# The only wandb run that generalized well used the primary's OWN in-domain
+# anchors, few events, no simulation (poc.yml on 2016, no anchor_datasets). S6
+# replicates that recipe but stays in 2012:
+#   - DROP the simulation pion/muon anchor_datasets entirely.
+#   - Keep the primary's 75 pion + 75 muon hand-marked anchors (mark_anchors.py).
+#   - Keep the 129 in-domain electron showers as the only extra anchor file.
+# All anchors now live inside the 2012 TB cloud -> no sim/TB shortcut.
+# Note: the thr1<->thr2 swap that plagued the dedicated e-beam TB file does NOT
+# affect these in-domain electrons -- they come from the primary itself, already
+# in the primary's mm frame and thr convention. One more reason the dedicated
+# e-beam is abandoned.
+# Everything else (feature routing, scaling, model, loss) mirrors s5.
+# ============================================================
+
+data:
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/E70GeV_2012.h5   # TB 2012, unlabeled (condor/train.sh forces this anyway)
+  val_ratio: 0.2
+  seed: 42
+  filters: null
+
+  # ----- TB primary: MIXED anchors -> keep the hand-marked anchor_label -----
+  # (75/class marked near the nHits class peak via mark_anchors.py; they place
+  # the prototypes INSIDE the TB cloud, while sim anchors give clean labels.)
+  force_anchor: null        # -1 blanks anchor_label for the primary file; null -> keep file's field
+  # max_events: null        # optional reproducible subsample cap on the primary
+
+  # ----- IN-DOMAIN anchors only (S6: NO simulation) -----
+  # Convention (see configs/anchors.yml): 0=electron, 1=pion, 2=muon.
+  # Pion/muon anchors come from the PRIMARY's own hand-marked field (75 each,
+  # mark_anchors.py) -- force_anchor:null above keeps them. The ONLY extra anchor
+  # file is the in-domain electron set. The s5 simulation pion/muon entries are
+  # deliberately removed to eliminate the sim<->TB domain gap (see header).
+  anchor_datasets:
+    # Electron: DEDICATED 70 GeV electron beam (TB 2012, run 715723), RE-TESTED
+    # with the thr1<->thr2 SWAP CORRECTED. S4 abandoned this dedicated set because
+    # it overfit into an isolated latent island (anchors fly to PC2~1.4, cluster 0
+    # stayed ~0%). New hypothesis (s9): a big driver of that island was a
+    # preprocessing bug -- thr1 and thr2 are SWAPPED in the dedicated e-beam file
+    # vs the primary. Measured hit-thr fractions: primary {1:0.79,2:0.17,3:0.04}
+    # but raw dedicated {1:0.22,2:0.70,3:0.08}. Since thr is a MODEL FEATURE
+    # (mv_scalar:[thr]), that inverted signature is a give-away the encoder uses to
+    # trivially separate the anchors -> the island (same mechanism as the sim<->TB
+    # gap). Fix: swap thr 1<->2 in the dedicated file (thr3 unchanged) ->
+    # {1:0.70,2:0.22,3:0.08}, matching the primary's thr1-dominant pattern.
+    # File built by scratchpad/fix_thr.py from El70GeV_2012_TBanchors_v2.h5.
+    # If the island is gone now, the thr swap was the culprit; if it persists,
+    # the beam-specific signature is intrinsic and the in-domain recipe (s6) stays.
+    - path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/El70GeV_2012_TBanchors_v2_thrfix.h5
+      anchor_label: 0        # electron
+      field_map: null        # null -> reuse data.field_map below (same hit keys x/y/z/k/thr)
+      max_events: 500       # dedicated e-beam has 6000; cap moderate (count shown not to matter)
+    # - path: /pnfs/.../electron_..._train.h5
+    #   anchor_label: 0
+    #   max_events: 2000
+    # - path: /pnfs/.../muon_..._train.h5
+    #   anchor_label: 2
+    #   max_events: 2000
+
+  # ----- field_map: logical names -> real h5 keys (shared by all sources) -----
+  field_map:
+    offsets: offsets
+    hit:
+      x: x
+      y: y
+      z: z
+      k: k
+      thr: thr
+    event:
+      energy: energy
+      anchor_label: anchor_label   # absent in simulation files -> forced per anchor_dataset
+      class_label: particle_type   # noisy, inspection only (absent in sim -> -1)
+      nHits_total: null
+
+  anchor_field: anchor_label
+  eval_label_field: class_label
+
+# ----- Feature routing to multivector / GATr scalar input -----
+features:
+  mv_point: [x, y, z]
+  # thr restored: the run without it collapsed (heldout acc 0.94 -> 0.53 peak,
+  # then prototype collapse). It carries real shower/track discrimination, not
+  # just a sim-vs-TB give-away.
+  mv_scalar: [thr]
+  scalars: []
+  thr_encoding: ordinal
+  extra_event_scalars: []
+
+# ----- Per-feature scaling -----
+scaling:
+  source: online           # stats computed over the combined (TB + sim) train split
+  # Dedicated stats file so this combined run does NOT reuse the TB-only
+  # E70GeV_2016_stats.yml (online reuses an existing file if present; delete this
+  # file to force a recompute after changing anchor_datasets / max_events).
+  stats_path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/sim_anchors_s10_stats.yml
+  features:
+    x: {mode: z_norm}
+    y: {mode: z_norm}
+    z: {mode: z_norm}
+    k: {mode: minmax}
+    thr: {mode: none}
+    energy: {mode: log}
+
+# ----- Model -----
+model:
+  encoder:
+    hidden_mv_channels: 16
+    hidden_s_channels: 64
+    num_blocks: 4
+    out_mv_channels: 1
+    out_s_channels: 64
+    dropout: 0.2             # S4/P3: 0.1->0.2 regularization
+    mv_embedding_mode: centroid
+  aggregation:
+    # S4/P1: cardinality-aware pooling. Plain attention/mean/token all produce a
+    # WEIGHTED AVERAGE of hit tokens -> blind to nHits & magnitude, the axis that
+    # separates a compact EM shower (~500 hits) from a MIP (~76). attention_card
+    # keeps the attention summary and concatenates a sqrt-normalized SUM branch +
+    # log1p(nHits), restoring the cardinality the pooling otherwise discards.
+    type: attention_density
+    num_seeds: 2
+    num_heads: 4
+    dropout: 0.0
+  head:
+    proj_dim: 64
+    num_clusters: 3
+    temperature: 0.25        # S4/P2: 0.1->0.25 softer softmax so the minority
+                             # (electron) is not steamrolled by hard assignment
+
+# ----- Augmentation -----
+augment:
+  hit_dropout: 0.25         # S4/P3: 0.15->0.25 regularization
+
+# ----- Loss -----
+loss:
+  lambda_ce: 1.0           # S3: lowered 2.0->1.0 so more anchors don't re-memorize
+  lambda_vicreg: 1.0
+  swap:
+    weight: 1.0
+    sharpen_temp: 0.25
+  vicreg:
+    var_weight: 1.0
+    cov_weight: 0.04
+    var_gamma: 1.0
+  # Recalibrated toward the 2012 TB flag composition [e 0.012, pi 0.084, mu 0.892]
+  # (was [0.04,0.23,0.73], which fought reality -- the model converged to the true
+  # pi/mu split anyway). A touch of extra e/pi weight so neither cluster starves.
+  cluster_prior: [0.02, 0.10, 0.88]   # [e, pi, mu]; null -> disabled
+  lambda_prior: 2.0        # was 0.5: TB collapsed to pbar=[0.007,0.016,0.977] vs prior below
+  # S4/P2: ramp the prior 0->1 over epochs [5,20] so clusters FORM (swap/ce/vicreg)
+  # before the proportion prior is imposed -> minority electron isn't crushed early.
+  prior_warmup_epochs: [5, 20]
+  prior_ema: true
+  prior_ema_momentum: 0.9
+  # Exclude anchor events from p_bar: simulation anchors are equipartitioned per
+  # class, so counting them would  p_bar toward uniform and fight the prior.
+  # The prior must describe the UNLABELED (test-beam) population only.
+  prior_exclude_anchors: true
+  # Class-conditional domain alignment (opt-in): pulls the per-class mean of the
+  # SIM anchor embeddings toward a stop-grad EMA of the TB anchor mean of the
+  # same class (sim moves, TB never does). Classes without TB anchors (electron)
+  # are skipped. Weight ramps linearly 0 -> lambda between the two warmup epochs.
+  domain_align:
+    enabled: false
+    lambda: 1.0
+    warmup_epochs: [5, 15]
+    ema_momentum: 0.9
+
+# ----- Training -----
+train:
+  epochs: 100
+  batch_size: 256
+  lr: 1.0e-3
+  warmup_epochs: 20
+  warmup_start_factor: 0.01
+  weight_decay: 1.0e-3     # S4/P3: 1e-4->1e-3 regularization
+  device: cuda:0,1
+  num_workers: 8
+  precision: bf16-mixed     # bf16 autocast on tensor cores; 32-true -> full fp32
+  seed: 42
+  out_dir: results/sim_anchors_s10
+  plot_every: 5
+  plot_max_events: 3000
+  ckpt_monitor: val/heldout_anchor_acc
+  ckpt_save_top_k: 2
+  early_stop_patience: 10
+  early_stop_min_delta: 0.0
+  wandb:
+    enabled: true
+    project: gatr-clustering
+    entity: null
+    name: s10_density_seed42
+    mode: online

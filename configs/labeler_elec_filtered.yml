@@ -1,0 +1,120 @@
+# ============================================================
+# Anchor labeler — DEDICATED 70 GeV ELECTRON run, filtered + thr-swapped
+# (596 971 events). Companion to configs/labeler_filtered.yml: same folder,
+# same units, same envelope, so the two sessions are directly comparable.
+#
+#   bash run_labeler.sh --config configs/labeler_elec_filtered.yml --port 8052
+#
+# Why this session exists: the pion/muon/penetrante/ruido anchors are done on
+# the 833k filtered primary, but that file holds only 1328 particle_type = 0
+# events and the flag there is bimodal (p50 40 hits), i.e. not electrons. This
+# run IS an electron beam, and its electron flag looks like one: 12 438 events
+# with p10/p50/p90 = 419/501/583 hits — a single, compact, shower-like mode.
+# So here the job is the ebeam job, not the primary job: everything proposed is
+# an electron candidate and the review is about THROWING OUT contamination
+# (beam pions/muons sharing the trigger), not about finding the class.
+#
+# What the file's flags actually say (596 971 events, all energy = 70, all
+# beam_type = -1, runNr/eventNr NaN for every event so they are not shown):
+#   particle_type  2 -> 480 148 (p50  76 hits)  the bulk: beam muons
+#                 -1 ->  89 893 (p50  28 hits)  unclassified, near-empty
+#                  1 ->  14 492 (p50  48 hits)  "pion", but far too small at
+#                                               70 GeV to be hadronic showers
+#                  0 ->  12 438 (p50 501 hits)  the electron pool -> sampled
+#   filter_status  1 -> 476 639 (79.8%)
+#
+# Only class 0 is proposable; 1/2/3/5 exist purely as CORRECTION targets. If a
+# proposed event is a muon or a hadron, press 2/1; if the signal is scattered or
+# unreadable press 5 (`ruido` = "reviewed, no particle here"); use `i` only for
+# events you genuinely cannot judge ("not reviewed").
+#
+# Units: cm with a 1-based layer index, like E70GeV_2012_filtered.h5 and unlike
+# data/E70GeV_2012.h5 (mm, 0-based). Irrelevant here — the labeler only displays
+# what it reads — but any TRAINING config using these anchors must carry
+#   hit_affine: {x: [10.0, -5.204], y: [10.0, -5.204], z: [10.0, 198.5], k: [1.0, -1.0]}
+# ============================================================
+
+name: Elec 70GeV 2012 filtrado (thrswap, 597k)
+
+dataset:
+  backend: hdf5_flat
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/Elec70GeV_2012_thrswap_filtered.h5
+  offsets: offsets
+  coords: {x: x, y: y, z: z}
+  beam_axis: z
+  hit_color_field: thr
+  hit_color_label: thr
+  hit_extra_fields:
+    layer: k
+  nhits_field: nHits_total
+
+  # Pinned, not measured: measuring scans 45.3 M hits on every startup. Same box
+  # as configs/labeler_filtered.yml (only z starts at 0 here, where that file
+  # starts at 2) so an electron here looks the same size as a pion there.
+  bounds:
+    x: [0.5, 100.6]
+    y: [0.5, 100.6]
+    z: [0.0, 135.2]
+  bounds_pad: 0.0
+  show_envelope: true
+
+  event_fields:
+    nHits_total: nHits_total
+    particle_type: particle_type
+    filter_status: filter_status      # 1 = passes the quality filters (79.8%)
+    penetration_cond: penetration_cond
+    density: density
+    energy: energy
+
+# Same index convention as the training pipeline: 0=electron, 1=pion, 2=muon.
+classes:
+  - index: 0
+    name: electron
+    color: "#d62728"
+    key: "0"
+    source: {type: value, field: particle_type, value: 0}
+
+  - index: 1
+    name: pion
+    color: "#1f77b4"
+    key: "1"
+    source: null      # correction target only
+
+  - index: 2
+    name: muon
+    color: "#2ca02c"
+    key: "2"
+    source: null      # correction target only
+
+  - index: 3
+    name: multip
+    color: "#9467bd"
+    key: "3"
+    source: null
+
+  - index: 5
+    name: ruido
+    color: "#7f7f7f"
+    key: "5"
+    source: null
+
+sampling:
+  # random, NOT nhits_band: the band draws the middle of the electron pool, i.e.
+  # exactly the events most likely to be genuine electrons — it would hide the
+  # contamination this session exists to find. Uniform keeps the tails in view.
+  strategy: random
+  n_per_class: 40
+  seed: 42
+  window_std: 1.0
+  prefer_unseen: true
+
+session_path: ../sessions/elec_filtered_2012.json
+export_dir: ../sessions/exports
+autosave_seconds: 5
+
+# This file is an ANCHOR SOURCE, not the training file (the primary is
+# E70GeV_2012_filtered.h5), so the export writes one h5 per class holding only
+# the kept events, ready for data.anchor_datasets. The electron subset is what
+# this session is for; the pion/muon subsets are the contamination you removed,
+# and they are worth keeping — they are in-domain anchors from the same run.
+export_subsets: true

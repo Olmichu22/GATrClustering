@@ -1,0 +1,206 @@
+# ============================================================
+# S13: S12 with the multi-particle anchors PROMOTED to a fourth cluster.
+#
+# Motivation: the S12 evaluation on the full filtered sample showed the pion
+# cluster with a secondary peak around 200 hits, in a band where it has
+# essentially no anchors of its own (1 pion and 1 muon anchor between 142 and
+# 349 hits, against 12 electron and 16 multip). The 58 hand-labeled multip
+# anchors are the class that actually populates that band, so give them their
+# own cluster and see what they attract.
+#
+# Caveat measured before launching: the multip anchors sitting in that band are
+# COMPACT (12-26 active layers, density 8-22), while the filtered sample's
+# 150-300 hit population is PENETRATING and sparse (46 layers, density 4.3).
+# Same nHits, opposite geometry -- so multip may well not capture that specific
+# population. This run tests exactly that.
+#
+# Everything else is identical to S12 on purpose, so any difference is
+# attributable to the fourth class alone.
+#
+# Why: every experiment up to s11 shared one unfixable flaw -- the anchors came
+# from event FLAGS, and the flag is not the labeled particle, so a fraction of
+# every anchor set was simply wrong and poisoned the CE term (see
+# configs/anchors.yml). The anchors here were reviewed one by one in the 3D
+# labeler (anchor_labeler/) and only what was confirmed or relabeled survives.
+#
+# Differences vs s10 (density pooling, the best automatic run):
+#   1. ANCHORS: hand-curated, from two complementary sources (below).
+#   2. 70 GeV only -> `energy` is constant and carries zero information, so it
+#      is NOT a feature here (plan-b s11's extra_event_scalars: [energy] only
+#      made sense with the 30/70 GeV mix).
+#   3. The density scalar inside attention_density is NORMALIZED (see below)
+#      instead of entering raw at scale ~20.
+#   4. Multi-particle anchors feed CE as a fourth class (S12 excluded them).
+# ============================================================
+
+data:
+  # The primary is the labeler's export: same 38974 events as E70GeV_2012.h5,
+  # with anchor_label filled in from the manual session (460 anchors).
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/sessions/exports/E70GeV_2012_manualanchors_20260804-104726.h5
+  val_ratio: 0.2
+  seed: 42
+  filters: null
+
+  force_anchor: null        # keep the file's hand-curated anchor_label
+
+  # ----- multi-particle: USED here (this is the S13 change) -----
+  # The 58 class-3 anchors now feed CE like any other class; head.num_clusters is
+  # 4 and cluster_prior has a fourth entry accordingly.
+  ignore_anchor_labels: []
+  drop_ignored_anchor_events: false
+
+  # ----- extra electron anchors from the dedicated 70 GeV e-beam -----
+  # The primary yields only 40 curated electrons (29 train / 11 held-out), too
+  # few to steer either the CE or the checkpoint monitor. The dedicated e-beam
+  # run (thr-fixed) was reviewed in the labeler too and contributed 113 electrons
+  # verified by eye; this file contains ONLY those (see anchor_labeler/export.py,
+  # export_subsets), which is what anchor_datasets requires -- it forces the label
+  # on every event of the file it is given.
+  # CAVEAT: this dedicated beam is what produced the isolated latent island in s4.
+  # The thr1<->thr2 fix removed the biggest give-away (s9) but the island was
+  # never proven gone. If cluster 0 flies off in the PCA plots again, rerun
+  # without this block: that is the control, and the in-domain anchors alone are
+  # the fallback.
+  anchor_datasets:
+    - path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/sessions/exports/El70GeV_2012_TBanchors_v2_thrfix_manual_electron_20260804-104721.h5
+      anchor_label: 0        # electron
+      field_map: null
+      max_events: null       # all 113
+
+  field_map:
+    offsets: offsets
+    hit:
+      x: x
+      y: y
+      z: z
+      k: k
+      thr: thr
+    event:
+      energy: energy
+      anchor_label: anchor_label
+      class_label: particle_type
+      nHits_total: null
+
+  anchor_field: anchor_label
+  eval_label_field: class_label
+
+# ----- Feature routing -----
+features:
+  mv_point: [x, y, z]
+  mv_scalar: [thr]
+  scalars: []
+  thr_encoding: ordinal
+  # Empty on purpose: at a single beam energy `energy` is a constant column.
+  # The density does NOT go here -- it enters through the pooling (see
+  # model.aggregation), which is where a per-event descriptor belongs.
+  extra_event_scalars: []
+
+# ----- Per-feature scaling (stats computed ONLINE over the train split) -----
+scaling:
+  source: online
+  # Reuses the S12 statistics on purpose: same files, same split, same seed, so
+  # the normalization is identical and S12 vs S13 differ ONLY in the fourth class.
+  stats_path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s12_stats.yml
+  features:
+    x: {mode: z_norm}
+    y: {mode: z_norm}
+    z: {mode: z_norm}
+    k: {mode: minmax}
+    thr: {mode: none}
+    energy: {mode: log}
+    # Hits per active layer: heavy-tailed and bimodal (median ~1.9 for MIPs,
+    # ~23 for the ~10% that shower, max ~46). Plain z_norm would leave the tail
+    # at +6 sigma; plain log would leave a non-unit scale. log_z = z-score of
+    # log1p, with mean/std measured on the LOGGED values over the train split.
+    density: {mode: log_z}
+
+# ----- Model -----
+model:
+  encoder:
+    hidden_mv_channels: 16
+    hidden_s_channels: 64
+    num_blocks: 4
+    out_mv_channels: 1
+    out_s_channels: 64
+    dropout: 0.2
+    mv_embedding_mode: centroid
+  aggregation:
+    # Attention pooling + sqrt-normalized SUM (magnitude) + DENSITY (hits per
+    # active layer). Density rather than log1p(nHits) because nHits grows with
+    # how deep a shower goes; hits/layer is transverse compactness, independent
+    # of detector depth.
+    type: attention_density
+    num_seeds: 2
+    num_heads: 4
+    dropout: 0.0
+    # NEW vs s10: the magnitude branch gets its own LayerNorm(D) and the density
+    # is taken already normalized from the batch (scaling.features.density above)
+    # instead of both sharing one LayerNorm(D+1). Sharing it let the ~10% shower
+    # tail drag the normalizer's statistics and squash the magnitude branch on
+    # exactly the events that matter. Set to false to reproduce s10 verbatim.
+    separate_norm: true
+  head:
+    proj_dim: 64
+    num_clusters: 4
+    temperature: 0.25
+
+# ----- Augmentation -----
+augment:
+  hit_dropout: 0.25
+
+# ----- Loss -----
+loss:
+  lambda_ce: 1.0
+  lambda_vicreg: 1.0
+  swap:
+    weight: 1.0
+    sharpen_temp: 0.25
+  vicreg:
+    var_weight: 1.0
+    cov_weight: 0.04
+    var_gamma: 1.0
+  # [e, pi, mu, multip]. The multip fraction is MEASURED from the labeling
+  # session rather than guessed: of the events reviewed, 16.0% of those proposed
+  # from the electron pool turned out multi-particle, 1.0% of the pion pool and
+  # 0% of the muon pool; weighting by the real flag composition
+  # [e 0.012, pi 0.084, mu 0.892] gives 0.28%. Rounded up to 0.01 because
+  # lambda_prior is 2.0 and a prior of 0.003 would crush the cluster before it
+  # can form -- the point of this run is to see what it attracts, so it is given
+  # room rather than the tightest estimate. Taken off the muon share.
+  cluster_prior: [0.02, 0.10, 0.87, 0.01]
+  lambda_prior: 2.0
+  prior_warmup_epochs: [5, 20]
+  prior_ema: true
+  prior_ema_momentum: 0.9
+  prior_exclude_anchors: true
+  domain_align:
+    enabled: false
+    lambda: 1.0
+    warmup_epochs: [5, 15]
+    ema_momentum: 0.9
+
+# ----- Training -----
+train:
+  epochs: 100
+  batch_size: 256
+  lr: 1.0e-3
+  warmup_epochs: 20
+  warmup_start_factor: 0.01
+  weight_decay: 1.0e-3
+  device: cuda:0,1
+  num_workers: 8
+  precision: bf16-mixed
+  seed: 42
+  out_dir: results/manual_s13
+  plot_every: 5
+  plot_max_events: 3000
+  ckpt_monitor: val/heldout_anchor_acc
+  ckpt_save_top_k: 2
+  early_stop_patience: 10
+  early_stop_min_delta: 0.0
+  wandb:
+    enabled: true
+    project: gatr-clustering
+    entity: null
+    name: s13_manual_anchors_multip
+    mode: online

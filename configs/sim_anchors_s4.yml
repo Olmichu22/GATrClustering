@@ -1,0 +1,190 @@
+# ============================================================
+# Variant of poc.yml: SIMULATION as anchors, TEST-BEAM fully unlabeled.
+# ------------------------------------------------------------
+# - data.path              : the test-beam (TB) file -> used WITHOUT any label
+#                            (force_anchor: -1 blanks its own anchor_label field).
+# - data.anchor_datasets   : one or more simulation files; EVERY event of each
+#                            file gets the given anchor_label (one particle class
+#                            per file). These drive CE + prototype init.
+# Everything else (feature routing, scaling, model, loss) mirrors poc.yml.
+# ============================================================
+
+data:
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/E70GeV_2016.h5   # TB, unlabeled
+  val_ratio: 0.2
+  seed: 42
+  filters: null
+
+  # ----- TB primary: MIXED anchors -> keep the hand-marked anchor_label -----
+  # (75/class marked near the nHits class peak via mark_anchors.py; they place
+  # the prototypes INSIDE the TB cloud, while sim anchors give clean labels.)
+  force_anchor: null        # -1 blanks anchor_label for the primary file; null -> keep file's field
+  # max_events: null        # optional reproducible subsample cap on the primary
+
+  # ----- Simulation files used as anchors (one class per file) -----
+  # Convention (see configs/anchors.yml): 0=electron, 1=pion, 2=muon.
+  # Add electron/muon simulation files as extra entries when available.
+  anchor_datasets:
+    - path: /pnfs/ciemat.es/data/calice/local/arqolmo/SDHCAL_sim/simulations/hdf5/1k_pi-_Emin70GeV_Emax70GeV_continuous_fixed_position_5-5--20_sigmaMomentum_0.1_thr0.11-6.12-16.83_eff0.96/1k_pi-_Emin70GeV_Emax70GeV_continuous_fixed_position_5-5--20_sigmaMomentum_0.1_thr0.11-6.12-16.83_eff0.96_full.h5 
+      anchor_label: 1        # pion
+      field_map: null        # null -> reuse data.field_map below (same hit keys x/y/z/k/thr)
+      max_events: 200       # S4: moderate (count already shown not to matter)
+
+    - path: /pnfs/ciemat.es/data/calice/local/arqolmo/SDHCAL_sim/simulations/hdf5/1k_mu-_Emin70GeV_Emax70GeV_continuous_fixed_position_5-5--20_sigmaMomentum_0.1_thr0.11-6.12-16.83_eff0.96/1k_mu-_Emin70GeV_Emax70GeV_continuous_fixed_position_5-5--20_sigmaMomentum_0.1_thr0.11-6.12-16.83_eff0.96_full.h5
+      anchor_label: 2        # muon
+      field_map: null        # null -> reuse data.field_map below (same hit keys x/y/z/k/thr)
+      max_events: 200       # S4: moderate (count already shown not to matter)
+    
+    # Electron: REAL test-beam electron beam (2012 campaign, runNr 715723),
+    # converted from the raw DHCAL file to the 2012 mm frame + shower-selected
+    # (nHits 300-1400, med ~506) -> data/El70GeV_2012_TBanchors.h5. This is an
+    # IN-DOMAIN anchor (same detector/geometry as the primary 2012 file), so it
+    # embeds in the TB cloud without a sim island -- replaces the sim 1k_e- file
+    # (which sat in an isolated island that never grounded TB electrons).
+    # cerenkovFlag is dead (all-zero) and is_electron (med 195 nHits) does not
+    # capture real showers, so this beam is the only trustworthy electron label.
+    - path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/El70GeV_2012_TBanchors_v2.h5
+      anchor_label: 0        # electron
+      field_map: null        # null -> reuse data.field_map below (same hit keys x/y/z/k/thr)
+      max_events: 400       # S4: electron gets the most variety (the failing class)
+    # - path: /pnfs/.../electron_..._train.h5
+    #   anchor_label: 0
+    #   max_events: 2000
+    # - path: /pnfs/.../muon_..._train.h5
+    #   anchor_label: 2
+    #   max_events: 2000
+
+  # ----- field_map: logical names -> real h5 keys (shared by all sources) -----
+  field_map:
+    offsets: offsets
+    hit:
+      x: x
+      y: y
+      z: z
+      k: k
+      thr: thr
+    event:
+      energy: energy
+      anchor_label: anchor_label   # absent in simulation files -> forced per anchor_dataset
+      class_label: particle_type   # noisy, inspection only (absent in sim -> -1)
+      nHits_total: null
+
+  anchor_field: anchor_label
+  eval_label_field: class_label
+
+# ----- Feature routing to multivector / GATr scalar input -----
+features:
+  mv_point: [x, y, z]
+  # thr restored: the run without it collapsed (heldout acc 0.94 -> 0.53 peak,
+  # then prototype collapse). It carries real shower/track discrimination, not
+  # just a sim-vs-TB give-away.
+  mv_scalar: [thr]
+  scalars: []
+  thr_encoding: ordinal
+  extra_event_scalars: []
+
+# ----- Per-feature scaling -----
+scaling:
+  source: online           # stats computed over the combined (TB + sim) train split
+  # Dedicated stats file so this combined run does NOT reuse the TB-only
+  # E70GeV_2016_stats.yml (online reuses an existing file if present; delete this
+  # file to force a recompute after changing anchor_datasets / max_events).
+  stats_path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/sim_anchors_s4_stats.yml
+  features:
+    x: {mode: z_norm}
+    y: {mode: z_norm}
+    z: {mode: z_norm}
+    k: {mode: minmax}
+    thr: {mode: none}
+    energy: {mode: log}
+
+# ----- Model -----
+model:
+  encoder:
+    hidden_mv_channels: 16
+    hidden_s_channels: 64
+    num_blocks: 4
+    out_mv_channels: 1
+    out_s_channels: 64
+    dropout: 0.2             # S4/P3: 0.1->0.2 regularization
+    mv_embedding_mode: centroid
+  aggregation:
+    # S4/P1: cardinality-aware pooling. Plain attention/mean/token all produce a
+    # WEIGHTED AVERAGE of hit tokens -> blind to nHits & magnitude, the axis that
+    # separates a compact EM shower (~500 hits) from a MIP (~76). attention_card
+    # keeps the attention summary and concatenates a sqrt-normalized SUM branch +
+    # log1p(nHits), restoring the cardinality the pooling otherwise discards.
+    type: attention_card
+    num_seeds: 2
+    num_heads: 4
+    dropout: 0.0
+  head:
+    proj_dim: 64
+    num_clusters: 3
+    temperature: 0.25        # S4/P2: 0.1->0.25 softer softmax so the minority
+                             # (electron) is not steamrolled by hard assignment
+
+# ----- Augmentation -----
+augment:
+  hit_dropout: 0.25         # S4/P3: 0.15->0.25 regularization
+
+# ----- Loss -----
+loss:
+  lambda_ce: 1.0           # S3: lowered 2.0->1.0 so more anchors don't re-memorize
+  lambda_vicreg: 1.0
+  swap:
+    weight: 1.0
+    sharpen_temp: 0.25
+  vicreg:
+    var_weight: 1.0
+    cov_weight: 0.04
+    var_gamma: 1.0
+  # Recalibrated toward the 2012 TB flag composition [e 0.012, pi 0.084, mu 0.892]
+  # (was [0.04,0.23,0.73], which fought reality -- the model converged to the true
+  # pi/mu split anyway). A touch of extra e/pi weight so neither cluster starves.
+  cluster_prior: [0.02, 0.10, 0.88]   # [e, pi, mu]; null -> disabled
+  lambda_prior: 2.0        # was 0.5: TB collapsed to pbar=[0.007,0.016,0.977] vs prior below
+  # S4/P2: ramp the prior 0->1 over epochs [5,20] so clusters FORM (swap/ce/vicreg)
+  # before the proportion prior is imposed -> minority electron isn't crushed early.
+  prior_warmup_epochs: [5, 20]
+  prior_ema: true
+  prior_ema_momentum: 0.9
+  # Exclude anchor events from p_bar: simulation anchors are equipartitioned per
+  # class, so counting them would  p_bar toward uniform and fight the prior.
+  # The prior must describe the UNLABELED (test-beam) population only.
+  prior_exclude_anchors: true
+  # Class-conditional domain alignment (opt-in): pulls the per-class mean of the
+  # SIM anchor embeddings toward a stop-grad EMA of the TB anchor mean of the
+  # same class (sim moves, TB never does). Classes without TB anchors (electron)
+  # are skipped. Weight ramps linearly 0 -> lambda between the two warmup epochs.
+  domain_align:
+    enabled: false
+    lambda: 1.0
+    warmup_epochs: [5, 15]
+    ema_momentum: 0.9
+
+# ----- Training -----
+train:
+  epochs: 100
+  batch_size: 256
+  lr: 1.0e-3
+  warmup_epochs: 20
+  warmup_start_factor: 0.01
+  weight_decay: 1.0e-3     # S4/P3: 1e-4->1e-3 regularization
+  device: cuda:0,1
+  num_workers: 8
+  precision: bf16-mixed     # bf16 autocast on tensor cores; 32-true -> full fp32
+  seed: 42
+  out_dir: results/sim_anchors_s4
+  plot_every: 5
+  plot_max_events: 3000
+  ckpt_monitor: val/heldout_anchor_acc
+  ckpt_save_top_k: 2
+  early_stop_patience: 10
+  early_stop_min_delta: 0.0
+  wandb:
+    enabled: true
+    project: gatr-clustering
+    entity: null
+    name: s4_card_temp025_pwarm
+    mode: online

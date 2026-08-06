@@ -1,0 +1,75 @@
+# ============================================================
+# Standard evaluation (plots + latent_explorer.npz) of the BEST run (s10b,
+# density seed123) on the 30 GeV eval set. This is a copy of
+# configs/sim_anchors_s10b.yml with the anchor sources STRIPPED (we evaluate the
+# real e/pi/mu population only, no anchors) and the data pointed at the 30 GeV
+# adapted file. Scaling REUSES the s10b training stats (source=online + an
+# existing stats_path -> FeatureScaler LOADS it, never recomputes on the eval
+# set). Mirrors the cfg mutation src/infer_eval.py applies at runtime.
+# ============================================================
+
+data:
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/eval30/Pi30_eval_clustering.h5
+  val_ratio: 1.0            # evaluate over ALL 30 GeV events (anchors absent)
+  seed: 123
+  filters: null
+  force_anchor: null
+  anchor_datasets: null     # NO anchors at eval time (real e/pi/mu only)
+
+  field_map:
+    offsets: offsets
+    hit:
+      x: x
+      y: y
+      z: z
+      k: k
+      thr: thr
+    event:
+      energy: energy
+      anchor_label: anchor_label
+      class_label: particle_type
+      nHits_total: null
+
+  anchor_field: anchor_label
+  eval_label_field: class_label
+
+features:
+  mv_point: [x, y, z]
+  mv_scalar: [thr]
+  scalars: []
+  thr_encoding: ordinal
+  extra_event_scalars: []
+
+scaling:
+  source: online
+  stats_path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/sim_anchors_s10b_stats.yml
+  features:
+    x: {mode: z_norm}
+    y: {mode: z_norm}
+    z: {mode: z_norm}
+    k: {mode: minmax}
+    thr: {mode: none}
+    energy: {mode: log}
+
+model:
+  encoder:
+    hidden_mv_channels: 16
+    hidden_s_channels: 64
+    num_blocks: 4
+    out_mv_channels: 1
+    out_s_channels: 64
+    dropout: 0.2
+    mv_embedding_mode: centroid
+  aggregation:
+    type: attention_density
+    num_seeds: 2
+    num_heads: 4
+    dropout: 0.0
+  head:
+    proj_dim: 64
+    num_clusters: 3
+    temperature: 0.25
+
+# evaluate() only reads train.batch_size from this block.
+train:
+  batch_size: 256

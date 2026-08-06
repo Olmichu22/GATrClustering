@@ -1,0 +1,159 @@
+# ============================================================
+# Evaluation of the S13 model (hand-curated anchors + multip) on the FULL filtered 2012
+# sample: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/E70GeV_2012_filtered.h5
+# (833 545 events, 67.2 M hits, all 70 GeV).
+#
+#   condor_submit condor/eval_manual_s12_filtered.sub
+#
+# Two things differ from configs/manual_s12.yml and both matter:
+#
+#   val_ratio: 1.0   evaluate_clustering only ever looks at the VAL split
+#                    (`_, val_ds, _ = make_clustering_splits(...)`). This file
+#                    was never trained on, so "held out" is the whole thing:
+#                    ratio 1.0 puts all 833 545 events in val and leaves train
+#                    empty.
+#
+#   scaling.source: file   REUSE the statistics measured during training. The
+#                    model learned on x/y/z z-scored and density log_z'd with
+#                    those exact constants; recomputing them on a different
+#                    sample would silently shift every input distribution and
+#                    the evaluation would not describe the trained model.
+#
+# The file carries no anchor_label, so every event is unlabeled (-1) and the
+# held-out anchor accuracy is skipped -- this is an unsupervised look at how the
+# model partitions the full sample. Note it also has its OWN per-event `density`
+# field; it is NOT read (field_map decides what is loaded) and the pipeline
+# derives its own hits/active-layer, the same quantity the model was trained on.
+# ============================================================
+
+data:
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/E70GeV_2012_filtered.h5
+  val_ratio: 1.0
+  seed: 42
+  filters: null
+  force_anchor: null
+  anchor_datasets: null
+
+  # ----- UNITS: this file is NOT in the training file's frame -----------------
+  # Measured against data/E70GeV_2012.h5 on the detector grid itself (96 pads of
+  # 10.408 mm in x/y, 48 layers 28 mm apart):
+  #     training : x,y in [5.20, 993.96] mm, z in [226.5, 1542.5] mm, k in 0..47
+  #     this file: x,y in [1.04, 100.01] cm, z in [2.8, 134.4] cm,    k in 1..48
+  # The relation is exactly affine, reproducing the training grid to 3e-4 mm in
+  # x and 1e-4 mm in z -- i.e. the same detector expressed in cm with a shifted
+  # origin and a 1-based layer index. Without this the model would see every
+  # coordinate ~10x too small and the evaluation would be meaningless.
+  hit_affine:
+    x: [10.0, -5.204]
+    y: [10.0, -5.204]
+    z: [10.0, 198.5]
+    k: [1.0, -1.0]
+
+  field_map:
+    offsets: offsets
+    hit:
+      x: x
+      y: y
+      z: z
+      k: k
+      thr: thr
+    event:
+      energy: energy
+      anchor_label: anchor_label   # absent in this file -> all events unlabeled
+      class_label: particle_type   # inspection only; NOT the training convention
+      nHits_total: null            # derived from offsets
+
+  anchor_field: anchor_label
+  eval_label_field: class_label
+
+# ----- must match the trained checkpoint exactly -----
+features:
+  mv_point: [x, y, z]
+  mv_scalar: [thr]
+  scalars: []
+  thr_encoding: ordinal
+  extra_event_scalars: []
+
+scaling:
+  source: file
+  stats_path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s12_stats.yml
+  features:
+    x: {mode: z_norm}
+    y: {mode: z_norm}
+    z: {mode: z_norm}
+    k: {mode: minmax}
+    thr: {mode: none}
+    energy: {mode: log}
+    density: {mode: log_z}
+
+model:
+  encoder:
+    hidden_mv_channels: 16
+    hidden_s_channels: 64
+    num_blocks: 4
+    out_mv_channels: 1
+    out_s_channels: 64
+    dropout: 0.2
+    mv_embedding_mode: centroid
+  aggregation:
+    type: attention_density
+    num_seeds: 2
+    num_heads: 4
+    dropout: 0.0
+    separate_norm: true
+  head:
+    proj_dim: 64
+    num_clusters: 4
+    temperature: 0.25
+
+augment:
+  hit_dropout: 0.25
+
+loss:
+  lambda_ce: 1.0
+  lambda_vicreg: 1.0
+  swap:
+    weight: 1.0
+    sharpen_temp: 0.25
+  vicreg:
+    var_weight: 1.0
+    cov_weight: 0.04
+    var_gamma: 1.0
+  cluster_prior: [0.02, 0.10, 0.87, 0.01]
+  lambda_prior: 2.0
+  prior_warmup_epochs: [5, 20]
+  prior_ema: true
+  prior_ema_momentum: 0.9
+  prior_exclude_anchors: true
+  domain_align:
+    enabled: false
+    lambda: 1.0
+    warmup_epochs: [5, 15]
+    ema_momentum: 0.9
+
+train:
+  # only batch_size is read by evaluate_clustering; the rest is kept so the file
+  # stays a valid, self-contained config.
+  epochs: 100
+  batch_size: 256
+  lr: 1.0e-3
+  warmup_epochs: 20
+  warmup_start_factor: 0.01
+  weight_decay: 1.0e-3
+  device: cuda:0
+  num_workers: 8
+  precision: bf16-mixed
+  seed: 42
+  out_dir: results/manual_s12
+  plot_every: 5
+  plot_max_events: 3000
+  ckpt_monitor: val/heldout_anchor_acc
+  ckpt_save_top_k: 2
+  early_stop_patience: 10
+  early_stop_min_delta: 0.0
+  wandb:
+    enabled: false
+    project: gatr-clustering
+    entity: null
+    name: s13_eval_filtered_full
+    mode: offline

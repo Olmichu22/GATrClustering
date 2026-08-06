@@ -37,6 +37,13 @@ event:
   is_pion: is_pion
   is_muon: is_muon
 
+# ----- layer selection -----
+# Keep only hits with layer <= max_layer (0-based, inclusive; e.g. 47 keeps
+# layers 0..47). null/absent -> keep all layers. `layer_logical` names the
+# logical hit field holding the layer index. CLI --max-layer overrides this.
+max_layer: 47
+layer_logical: k
+
 # ----- threshold normalization -----
 # Map offset-encoded thresholds (5/6/7) back to 1/2/3 per hit. Set to false if
 # the branch is already in {1,2,3} and you want it untouched.

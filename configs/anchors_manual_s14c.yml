@@ -1,0 +1,8 @@
+# Cluster -> particle names for S14c (K=5: e, pi, mu, ruido, penetrante). Legends only.
+classes:
+  0: is_electron
+  1: is_pion
+  2: is_muon
+  3: is_ruido
+  4: is_penetrante
+int_source: null

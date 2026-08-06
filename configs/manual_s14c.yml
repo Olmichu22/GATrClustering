@@ -1,0 +1,249 @@
+# ============================================================
+# S14c: cinco clusters — electron / pion / muon / ruido / PENETRANTE.
+#
+#   bash teardown_labelers.sh
+#   condor_submit condor/manual_s14c.sub
+#
+# Uno de los tres barridos de S14 sobre la muestra grande (833k) con anchors
+# etiquetados a mano. Los tres comparten primario, unidades, features, modelo y
+# optimizador; SOLO cambia qué clases del etiquetado se convierten en cluster.
+# Cualquier diferencia entre ellos es atribuible a eso.
+#
+# Convención del etiquetador (NO es el índice de cluster):
+#   0 electron | 1 pion | 2 muon | 3 multip | 4 penetrante | 5 ruido
+# `multip` se IGNORA en los tres (42 anchors compactos que S13 ya demostró que
+# no capturan la banda penetrante), y sus eventos se sacan del entrenamiento.
+# `data.remap_anchor_labels` traduce etiqueta -> índice de cluster, porque la
+# cabeza CE exige 0..K-1 contiguos.
+#
+# Clusters de este run (K=5): [e, pi, mu, ruido, penetrante]
+#
+# S14b más la banda penetrante como quinto cluster: 26 anchors propios para la
+# población de 150-350 hits (~46 capas activas, densidad ~4) que S12 y S13
+# metían en el cluster de piones porque ningún anchor tenía esa geometría, y que
+# S13 demostró que `multip` (compacto, 12-26 capas, densidad 8-22) no captura.
+#
+# Es el run más completo del barrido y también el que más puede fallar: 26
+# anchors son pocos para sostener un cluster. Contra S14b se ve si esos 26
+# bastan para sacar la banda del cluster de piones.
+#
+# ============================================================
+
+# ============================================================
+# S14b: cuatro clusters — electron / pion / muon / RUIDO.
+#
+#   bash teardown_labelers.sh
+#   condor_submit condor/manual_s14b.sub
+#
+# Uno de los tres barridos de S14 sobre la muestra grande (833k) con anchors
+# etiquetados a mano. Los tres comparten primario, unidades, features, modelo y
+# optimizador; SOLO cambia qué clases del etiquetado se convierten en cluster.
+# Cualquier diferencia entre ellos es atribuible a eso.
+#
+# Convención del etiquetador (NO es el índice de cluster):
+#   0 electron | 1 pion | 2 muon | 3 multip | 4 penetrante | 5 ruido
+# `multip` se IGNORA en los tres (42 anchors compactos que S13 ya demostró que
+# no capturan la banda penetrante), y sus eventos se sacan del entrenamiento.
+# `data.remap_anchor_labels` traduce etiqueta -> índice de cluster, porque la
+# cabeza CE exige 0..K-1 contiguos.
+#
+# Clusters de este run (K=4): [e, pi, mu, ruido]
+#
+# La diferencia con S14a no es solo la clase: al dar cluster al ruido, la
+# muestra deja de filtrarse (`filters` fuera, ver abajo) y pasa de 521k a 833k
+# eventos. El prior lo refleja — el tercio particle_type = -1 (281 806 eventos,
+# mediana 13 hits) es precisamente lo que este cluster tiene que absorber.
+#
+# La pregunta que responde: ¿limpia mejor un corte de calidad hecho a mano o un
+# cluster que aprende a reconocer la basura? Si funciona, el corte se sustituye
+# por el modelo y nada se tira antes de mirarlo.
+#
+# ============================================================
+
+data:
+  # Escrito por teardown_labelers.sh con nombre FIJO (sin timestamp) para que
+  # este config no haya que tocarlo: es una copia de
+  # data/filtered/E70GeV_2012_filtered.h5 con anchor_label relleno.
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s14/E70GeV_2012_filtered_anchors.h5
+  val_ratio: 0.2
+  seed: 42
+
+  # ----- filtro de calidad ---------------------------------------------------
+  # Un tercio del fichero (281 806 eventos, 33.8%) es particle_type = -1 con
+  # mediana de 13 hits: casi vacío. filter_status = 1 deja 521 329 eventos y
+  # conserva los anchors de física (pion 256/263, muon 471/513, multip 40/42,
+  # penetrante 24/26) mientras tira 123 de los 154 de ruido. Es el mismo criterio
+  # que ya venía aplicado en la muestra, no uno inventado aquí.
+  # SIN filter_status: si `ruido` es un cluster, filtrarlo antes sería pedirle
+  # al modelo que aprenda una clase cuyos ejemplos acabamos de borrar. De los
+  # 154 anchors de ruido solo 31 pasan el filtro de calidad. Se entrena sobre
+  # los 833 545 eventos y el corte de calidad deja de decidir por el modelo.
+  # min_hits: 10
+
+  force_anchor: null        # conservar el anchor_label curado del fichero
+
+  # `ruido` fuera, y sus eventos fuera también: no son una clase, son eventos
+  # que no queremos ni en el término no supervisado.
+  # ruido (5) -> cluster 3; penetrante (4) se queda en 4. multip (3) fuera.
+  remap_anchor_labels: {5: 3}
+  ignore_anchor_labels: [3]
+  drop_ignored_anchor_events: false
+
+  # ----- UNIDADES ------------------------------------------------------------
+  # Este fichero está en cm con índice de capa 1-based; el marco de referencia
+  # del pipeline es mm con capa 0-based (data/E70GeV_2012.h5). La relación es
+  # exactamente afín (reproduce la rejilla de entrenamiento a 3e-4 mm). Sin esto
+  # el modelo vería cada coordenada 10x más pequeña.
+  # Se aplica a TODOS los ficheros del reader, primario y anchor_datasets: el run
+  # de electrones está en las mismas unidades, que es justo por qué se usa el
+  # filtrado y no El70GeV_2012_TBanchors_v2_thrfix.h5 (que ya está en mm).
+  hit_affine:
+    x: [10.0, -5.204]
+    y: [10.0, -5.204]
+    z: [10.0, 198.5]
+    k: [1.0, -1.0]
+
+  # Electrones curados del run dedicado (Elec70GeV_2012_thrswap_filtered.h5).
+  # anchor_datasets fuerza la etiqueta sobre TODOS los eventos del fichero, por
+  # eso el fichero contiene solo los electrones confirmados (export_subsets).
+  anchor_datasets:
+    - path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s14/Elec70GeV_2012_electron_anchors.h5
+      anchor_label: 0
+      field_map: null        # mismo layout que el primario
+      max_events: null
+
+  field_map:
+    offsets: offsets
+    hit:
+      x: x
+      y: y
+      z: z
+      k: k
+      thr: thr
+    event:
+      energy: energy
+      anchor_label: anchor_label
+      class_label: particle_type   # solo inspección; NO es la verdad
+      nHits_total: null            # derivado de offsets
+      filter_status: filter_status # necesario para data.filters
+
+  anchor_field: anchor_label
+  eval_label_field: class_label
+
+# ----- Feature routing -----
+# Idéntico a S13: 70 GeV en todo, así que `energy` es una columna constante y no
+# entra. La densidad no va aquí, entra por el pooling.
+features:
+  mv_point: [x, y, z]
+  mv_scalar: [thr]
+  scalars: []
+  thr_encoding: ordinal
+  extra_event_scalars: []
+
+# ----- Escalado (estadísticas ONLINE sobre el split de train) -----
+# Ruta NUEVA a propósito: la muestra cambia (833k filtrados en vez de 39k), así
+# que reutilizar manual_s12_stats.yml normalizaría con constantes de otra
+# población. El fichero no existe -> se mide y se guarda.
+scaling:
+  source: online
+  stats_path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s14c_stats.yml
+  features:
+    x: {mode: z_norm}
+    y: {mode: z_norm}
+    z: {mode: z_norm}
+    k: {mode: minmax}
+    thr: {mode: none}
+    energy: {mode: log}
+    density: {mode: log_z}
+
+# ----- Modelo (igual que S13 salvo num_clusters) -----
+model:
+  encoder:
+    hidden_mv_channels: 16
+    hidden_s_channels: 64
+    num_blocks: 4
+    out_mv_channels: 1
+    out_s_channels: 64
+    dropout: 0.2
+    mv_embedding_mode: centroid
+  aggregation:
+    type: attention_density
+    num_seeds: 2
+    num_heads: 4
+    dropout: 0.0
+    separate_norm: true
+  head:
+    proj_dim: 64
+    num_clusters: 5          # [e, pi, mu, ruido, penetrante]
+    temperature: 0.25
+
+augment:
+  hit_dropout: 0.25
+
+# ----- Loss -----
+loss:
+  lambda_ce: 1.0
+  lambda_vicreg: 1.0
+  swap:
+    weight: 1.0
+    sharpen_temp: 0.25
+  vicreg:
+    var_weight: 1.0
+    cov_weight: 0.04
+    var_gamma: 1.0
+
+  # MEDIDO sobre los 833 545 eventos del fichero SIN filtrar (este run no aplica
+  # filter_status), por composición de particle_type:
+  #     -1  33.8%  casi vacíos, mediana 13 hits -> es el cluster `ruido`
+  #      2  62.4%  muones
+  #      1   3.6%  piones
+  #      0   0.2%  el flag de electrón, que la revisión manual desmintió
+  # Referencia por bandas de nHits sobre el subconjunto de calidad (521 329):
+  #     <50    21.3%  (muones + no clasificados)
+  #     50-150 73.7%  (muones)
+  #     150-350 0.35% (la banda `penetrante`)
+  #     350-700 0.26%
+  #     >700    4.45% (piones: 22 848 de 23 178)
+  # De ahí mu ~0.90 y pi ~0.05. Electrón y penetrante se dejan por ENCIMA de su
+  # fracción medida (~0.3% y ~0.35%): con lambda_prior = 2.0 un prior de 0.003
+  # aplasta el cluster antes de que se forme, y estos dos son justo los que el
+  # run tiene que hacer emerger. Se les da aire a costa de la parte de muón.
+  cluster_prior: [0.015, 0.035, 0.60, 0.33, 0.02]
+  lambda_prior: 2.0
+  prior_warmup_epochs: [5, 20]
+  prior_ema: true
+  prior_ema_momentum: 0.9
+  prior_exclude_anchors: true
+  domain_align:
+    enabled: false
+    lambda: 1.0
+    warmup_epochs: [5, 15]
+    ema_momentum: 0.9
+
+# ----- Entrenamiento -----
+train:
+  # 13x más eventos por época que S13 (521k vs 39k). 40 épocas aquí son ~7x los
+  # pasos de gradiente de las 100 de S13; subirlo solo alarga el trabajo.
+  epochs: 40
+  batch_size: 256
+  lr: 1.0e-3
+  warmup_epochs: 5
+  warmup_start_factor: 0.01
+  weight_decay: 1.0e-3
+  device: cuda:0,1
+  num_workers: 8
+  precision: bf16-mixed
+  seed: 42
+  out_dir: results/manual_s14c
+  plot_every: 2
+  plot_max_events: 3000
+  ckpt_monitor: val/heldout_anchor_acc
+  ckpt_save_top_k: 2
+  early_stop_patience: 8
+  early_stop_min_delta: 0.0
+  wandb:
+    enabled: true
+    project: gatr-clustering
+    entity: null
+    name: s14c_ruido_penetrante
+    mode: online

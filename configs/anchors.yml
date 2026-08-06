@@ -13,14 +13,19 @@ nhits_field: nHits_total
 # For each class, pick `n_per_class` events whose nHits is near the class mean
 # (within mean +/- window_std * std), sampled randomly but reproducibly (seed).
 # If the band has fewer than n_per_class events, it auto-widens to the closest N.
-n_per_class: 50
+n_per_class: 75
 seed: 42
-window_std: 0.5
+# 1.0 (not 0.01): with a near-zero window the 75 anchors per class were clones
+# (all muons at nHits=82 exactly) -> CE memorizes them with no generalization
+# pressure. One sigma keeps them near the peak but with real intra-class variety.
+window_std: 1.0
 
 # class index -> source flag field (boolean, mutually exclusive)
 # Convention: 0=electron, 1=pion, 2=muon (K = number of entries here).
 classes:
-  0: is_electron
+  # 0 (is_electron) dropped: the flag pool has mean nHits ~349 at 70 GeV, which
+  # is physically wrong for e-showers (~1000 hits) -> likely misID. Electron
+  # anchors come from simulation only (configs/sim_anchors.yml anchor_datasets).
   1: is_pion
   2: is_muon
 
@@ -32,6 +37,6 @@ int_source: null            # e.g. {field: particle_type, map: {0: 0, 1: 1, 2: 2
 # Explicit event indices per class (0-based, into the h5 event order).
 # Only used when mode == manual.
 manual:
-  0: []                     # electron event indices
+  0: [85, 329, 24, 728, 739, 853, 854, 884, 884, 905, ]                     # electron event indices
   1: []                     # pion event indices
   2: []                     # muon event indices

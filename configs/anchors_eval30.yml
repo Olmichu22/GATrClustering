@@ -1,0 +1,9 @@
+# Cluster -> particle names for the 30 GeV standard eval plots only.
+# The trained prototypes are ordered by anchor_label (0=electron, 1=pion,
+# 2=muon), and the 30 GeV cross-tab confirmed the electron cluster is c0.
+# (configs/anchors.yml drops class 0 for MARKING; here we keep it for NAMING
+# so pca_z/tsne/nhits plots label the electron cluster.)
+classes:
+  0: is_electron
+  1: is_pion
+  2: is_muon

@@ -1,0 +1,139 @@
+# ============================================================
+# Anchor labeler — muestra filtrada 2012 a 30 GeV (1 596 273 eventos).
+#
+#   bash run_labeler.sh --config configs/labeler_e30_filtered.yml --port 8050
+#
+# Hermano de configs/labeler_filtered.yml (70 GeV, 833k). Misma convención de
+# clases y mismo flujo; lo que cambia es la muestra y, con ella, dos cosas que
+# NO son cosméticas:
+#
+#  1. MARCO DE COORDENADAS DISTINTO AL DE 70 GeV. Medido sobre los ficheros:
+#       E70GeV_2012_filtered.h5 : k 1..50, z 2.8..140.0 cm   (1-based)
+#       E30GeV_2012_filtered.h5 : k 0..48, z 0.0..134.4 cm   (0-based)
+#     Es exactamente una capa de diferencia (paso 2.8 cm = 28 mm). Aquí da
+#     igual — el labeler solo dibuja lo que lee — pero el config de
+#     ENTRENAMIENTO que use estos anchors NO puede copiar el hit_affine de
+#     s14a: para este fichero es
+#       hit_affine: {x: [10.0, -5.204], y: [10.0, -5.204],
+#                    z: [10.0, 226.5],  k: [1.0, 0.0]}
+#     (el de s14a, z:[10,198.5] k:[1,-1], es el de 70 GeV y aquí desplazaría
+#     todo una capa dejando k = -1).
+#
+#  2. A 30 GeV EL FLAG DE ELECTRÓN SÍ PARECE UN ELECTRÓN. Composición medida
+#     (nHits p10/50/90):
+#       particle_type -1 : 496 894 (31.1%)   8 /  21 /  49   casi vacíos
+#       particle_type  0 :  18 822 ( 1.2%)  82 / 296 / 410   modo compacto de shower
+#       particle_type  1 : 121 381 ( 7.6%) 142 / 469 / 577   piones
+#       particle_type  2 : 959 176 (60.1%)  12 /  76 / 101   muones
+#       filter_status 1  : 1 009 696 (63.3%)
+#     A 70 GeV el flag 0 era bimodal (17/40/876) y se descartó como misID; aquí
+#     no lo es. Aun así se deja como CORRECTION TARGET (source: null) porque esta
+#     sesión es la de piones y muones: los electrones se etiquetan aparte, en la
+#     muestra dedicada de 30 GeV (configs/labeler_elec30_filtered.yml, 8051).
+#     Para proponerlos también desde aquí basta descomentar su `source` — y
+#     serían anchors IN-DOMAIN, que es justo lo que arregló la isla latente de
+#     los electrones en su día.
+# ============================================================
+
+name: TB 2012 filtrado (1.6M, 30 GeV)
+
+dataset:
+  backend: hdf5_flat
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/E30GeV_2012_filtered.h5
+  offsets: offsets
+  coords: {x: x, y: y, z: z}
+  beam_axis: z
+  hit_color_field: thr
+  hit_color_label: thr
+  hit_extra_fields:
+    layer: k
+  nhits_field: nHits_total
+
+  # Fijados, no medidos: medir escanea 135.5 M hits en cada arranque. Extents
+  # reales del fichero en SUS unidades (cm), con margen. La caja x/y es la misma
+  # que la de 70 GeV para que un evento se vea del mismo tamaño en las dos
+  # sesiones; z empieza en 0 aquí y en 2.8 allí (ver punto 1 de la cabecera).
+  bounds:
+    x: [0.5, 100.6]
+    y: [0.5, 100.6]
+    z: [0.0, 135.2]
+  bounds_pad: 0.0
+  show_envelope: true
+
+  event_fields:
+    nHits_total: nHits_total
+    particle_type: particle_type      # -1 = sin clasificar (31.1% del fichero)
+    filter_status: filter_status      # 1 = pasa los filtros de calidad (63.3%)
+    penetration_cond: penetration_cond
+    density: density
+    energy: energy
+    # runNr/eventNr existen como ramas pero son NaN en TODOS los eventos, igual
+    # que en el fichero de 70 GeV, así que no se muestran.
+
+# Convención de índices del pipeline de entrenamiento: 0=electron, 1=pion, 2=muon.
+classes:
+  - index: 0
+    name: electron
+    color: "#d62728"
+    key: "0"
+    # Correction target. Descomentar la línea `source` de abajo para proponerlos
+    # también aquí (ver punto 2 de la cabecera): a 30 GeV el pool es creíble.
+    source: null
+    # source: {type: value, field: particle_type, value: 0}
+
+  - index: 1
+    name: pion
+    color: "#1f77b4"
+    key: "1"
+    source: {type: value, field: particle_type, value: 1}
+
+  - index: 2
+    name: muon
+    color: "#2ca02c"
+    key: "2"
+    source: {type: value, field: particle_type, value: 2}
+
+  - index: 3
+    name: multip
+    color: "#9467bd"
+    key: "3"
+    source: null      # solo manual, como en las sesiones de 70 GeV
+
+  - index: 4
+    name: penetrante
+    color: "#ff7f0e"
+    key: "4"
+    # La banda se mantiene en 150-350 hits y NO se reescala con la energía: a
+    # 30 GeV el pico de muones sigue en p50 76 (p90 101) y los piones bajan a
+    # p50 469 (p10 142), así que 150-350 sigue siendo justo el hueco entre las
+    # dos poblaciones. Lo que sí cambia es el volumen y la contaminación: son
+    # 25 179 eventos (1.58% frente al 0.3% de 70 GeV) y ahora la cola baja de
+    # los piones reales entra en la banda. Sigue siendo un objetivo de MUESTREO,
+    # no una clase: si al mirarlos son piones, se marca 1 y ya está.
+    source: {type: range, field: nHits_total, min: 150, max: 350}
+
+  - index: 5
+    name: ruido
+    color: "#7f7f7f"
+    key: "5"
+    # Solo manual: "revisado, aquí no hay partícula". El pool automático obvio
+    # (particle_type = -1, 496 894 eventos de mediana 21 hits) inundaría cada
+    # ronda. S14b demostró además que darle cluster propio no sirve: la basura
+    # de <10 hits se va igualmente al cluster de muones.
+    source: null
+
+sampling:
+  strategy: random
+  n_per_class: 30
+  seed: 42
+  window_std: 1.0
+  prefer_unseen: true
+
+session_path: ../sessions/filtered30_2012.json
+export_dir: ../sessions/exports
+
+autosave_seconds: 5
+
+# El primario ES el fichero de entrenamiento -> los anchors van en su propio
+# anchor_label (write_h5 en el teardown), no en subsets por clase.
+export_subsets: false

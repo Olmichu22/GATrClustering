@@ -1,0 +1,115 @@
+# ============================================================
+# Anchor labeler — run DEDICADO de ELECTRONES a 30 GeV, filtrado + thr-swap.
+#
+#   bash run_labeler.sh --config configs/labeler_elec30_filtered.yml --port 8051
+#
+# Compañero de configs/labeler_e30_filtered.yml (primario 30 GeV, 8050), igual
+# que labeler_elec_filtered.yml lo era de labeler_filtered.yml a 70 GeV.
+#
+# RUTA PENDIENTE DE CONFIRMAR: el fichero todavía se está procesando. El nombre
+# de abajo es el análogo del de 70 GeV
+# (Elec70GeV_2012_thrswap_filtered.h5 -> Elec30GeV_2012_thrswap_filtered.h5).
+# Si el pipeline lo deja con otro nombre, cambiar SOLO `dataset.path`.
+#
+# Igual que a 70 GeV, aquí el trabajo es al revés que en el primario: todo lo
+# que se propone es candidato a electrón y la revisión consiste en TIRAR la
+# contaminación (piones/muones del haz que comparten trigger), no en encontrar
+# la clase. 1/2/3 y 5 existen solo como destino de corrección; `i` únicamente
+# para lo que de verdad no se pueda juzgar.
+#
+# Referencia de lo que hay que esperar, medida en el primario de 30 GeV: los
+# eventos con particle_type = 0 allí tienen nHits p10/50/90 = 82/296/410. Un
+# electrón de 30 GeV es aproximadamente eso; a 70 GeV el run dedicado daba
+# 419/501/583. Si el pool propuesto aquí sale mucho más pequeño (p50 < 100),
+# lo más probable es que el flag sea misID como pasaba en el primario de 70 GeV.
+#
+# UNIDADES: comprobar al abrir. El primario de 30 GeV está en cm con capa
+# 0-BASED (k 0..48, z 0..134.4), a diferencia del de 70 GeV que es 1-based
+# (k 1..50, z 2.8..140.0). Es irrelevante para etiquetar, pero el config de
+# entrenamiento que consuma estos anchors necesita el hit_affine del marco
+# correcto — para el marco 0-based es
+#   {x: [10.0, -5.204], y: [10.0, -5.204], z: [10.0, 226.5], k: [1.0, 0.0]}
+# y hit_affine se aplica a TODOS los ficheros del reader, primario y
+# anchor_datasets, así que los dos tienen que estar en el mismo marco.
+# ============================================================
+
+name: Elec 30GeV 2012 filtrado (thrswap)
+
+dataset:
+  backend: hdf5_flat
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/Elec30GeV_2012_thrswap_filtered.h5
+  offsets: offsets
+  coords: {x: x, y: y, z: z}
+  beam_axis: z
+  hit_color_field: thr
+  hit_color_label: thr
+  hit_extra_fields:
+    layer: k
+  nhits_field: nHits_total
+
+  # Misma caja que las otras sesiones para que los tamaños sean comparables a
+  # ojo. z desde 0 (marco 0-based, como el primario de 30 GeV).
+  bounds:
+    x: [0.5, 100.6]
+    y: [0.5, 100.6]
+    z: [0.0, 135.2]
+  bounds_pad: 0.0
+  show_envelope: true
+
+  event_fields:
+    nHits_total: nHits_total
+    particle_type: particle_type
+    filter_status: filter_status
+    penetration_cond: penetration_cond
+    density: density
+    energy: energy
+
+classes:
+  - index: 0
+    name: electron
+    color: "#d62728"
+    key: "0"
+    source: {type: value, field: particle_type, value: 0}
+
+  - index: 1
+    name: pion
+    color: "#1f77b4"
+    key: "1"
+    source: null      # solo destino de corrección
+
+  - index: 2
+    name: muon
+    color: "#2ca02c"
+    key: "2"
+    source: null      # solo destino de corrección
+
+  - index: 3
+    name: multip
+    color: "#9467bd"
+    key: "3"
+    source: null
+
+  - index: 5
+    name: ruido
+    color: "#7f7f7f"
+    key: "5"
+    source: null
+
+sampling:
+  # random, NO nhits_band: la banda dibuja el centro del pool de electrones, es
+  # decir los eventos con más papeletas de ser electrones de verdad — taparía
+  # justo la contaminación que esta sesión existe para encontrar.
+  strategy: random
+  n_per_class: 40
+  seed: 42
+  window_std: 1.0
+  prefer_unseen: true
+
+session_path: ../sessions/elec_filtered30_2012.json
+export_dir: ../sessions/exports
+autosave_seconds: 5
+
+# Fichero FUENTE de anchors (el primario es E30GeV_2012_filtered.h5), así que el
+# export escribe un h5 por clase con solo los eventos conservados, listo para
+# data.anchor_datasets.
+export_subsets: true

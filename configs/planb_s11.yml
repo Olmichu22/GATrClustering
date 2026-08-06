@@ -1,0 +1,165 @@
+# ============================================================
+# PLAN B (s11): energy as a global scalar feature + 30/70 GeV MIX.
+#
+# Motivation (see session notes / memory):
+#   s9/s10 solved e<->mu but the e<->pi bottleneck at 30 GeV is a DOMAIN SHIFT:
+#   the shower nHits scale slides with energy (pion peak ~1000 @70 -> ~450 @30)
+#   and energy was NOT a model feature. Plan b fixes both root causes at once:
+#     (1) add ENERGY as a global scalar (features.extra_event_scalars: [energy],
+#         log-scaled) so the encoder can recalibrate the shower threshold with E;
+#     (2) MIX 30+70 GeV unlabeled data so the model sees both scales, and
+#     (3) BI-ENERGY in-domain anchors (e/pi/mu at BOTH 30 and 70 GeV, marked from
+#         particle_type) so supervision is no longer monochromatic (70-only) and
+#         the abundant 30 GeV electrons (18k) directly teach the e<->pi boundary.
+#
+# Data: the two filtered, cm-frame, thr1-dominant files
+#   E70GeV_2012_filtered.h5 / E30GeV_2012_filtered.h5. Both share ONE coordinate
+#   frame (z=[2.8,5.6,...]) so mixing them adds no domain shortcut. DISJOINT
+#   splits built by src/convert/make_planb_splits.py:
+#     unlab_70.h5 / unlab_30.h5   -- 100k representative events/energy (labels
+#                                    stripped via force_anchor / anchor_label=-1)
+#     anchor_{e,pi,mu}{70,30}.h5  -- 300 in-domain anchors/class/energy
+#     eval_30.h5                  -- 200k held-out labelled 30 GeV (never in train)
+# Everything else (model, pooling, loss) mirrors s9b (attention_card + prior).
+# ============================================================
+
+data:
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/planb/unlab_70.h5   # primary (train.sh --data_path forces this too)
+  val_ratio: 0.2
+  seed: 123
+  filters: null
+
+  # Primary (70 GeV unlab) is fully UNLABELED: blank any label field.
+  force_anchor: -1
+
+  # ----- BI-ENERGY in-domain anchors + the 30 GeV unlabeled population -----
+  # Convention: 0=electron, 1=pion, 2=muon. anchor_label=-1 blanks a file (the
+  # 30 GeV unlabeled pool joins the primary population; it feeds the prior but
+  # not the CE loss). One particle_type per anchor file (force_anchor per source).
+  anchor_datasets:
+    - {path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/planb/unlab_30.h5,   anchor_label: -1}
+    # 70 GeV anchors
+    - {path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/planb/anchor_e70.h5,  anchor_label: 0}
+    - {path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/planb/anchor_pi70.h5, anchor_label: 1}
+    - {path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/planb/anchor_mu70.h5, anchor_label: 2}
+    # 30 GeV anchors (in-domain, correct energy -> directly attack e<->pi)
+    - {path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/planb/anchor_e30.h5,  anchor_label: 0}
+    - {path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/planb/anchor_pi30.h5, anchor_label: 1}
+    - {path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/planb/anchor_mu30.h5, anchor_label: 2}
+
+  # ----- field_map: logical names -> real h5 keys (shared by all sources) -----
+  field_map:
+    offsets: offsets
+    hit:
+      x: x
+      y: y
+      z: z
+      k: k
+      thr: thr
+    event:
+      energy: energy
+      anchor_label: anchor_label
+      class_label: particle_type   # eval only (0=e,1=pi,2=mu); NOT used by the loss
+      nHits_total: nHits_total
+
+  anchor_field: anchor_label
+  eval_label_field: class_label
+
+# ----- Feature routing -----
+features:
+  mv_point: [x, y, z]
+  mv_scalar: [thr]
+  scalars: []
+  thr_encoding: ordinal
+  # THE plan-b change: energy enters the GATr scalar input (broadcast per hit) so
+  # the encoder can condition the shower-nHits scale on the beam energy.
+  extra_event_scalars: [energy]
+
+# ----- Per-feature scaling -----
+scaling:
+  source: online
+  # Dedicated stats file (computed over the 70+30 train split). Delete to force a
+  # recompute after changing the split sizes / anchor datasets.
+  stats_path: /nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/planb/planb_s11_stats.yml
+  features:
+    x: {mode: z_norm}
+    y: {mode: z_norm}
+    z: {mode: z_norm}
+    k: {mode: minmax}
+    thr: {mode: none}
+    energy: {mode: log}
+
+# ----- Model (mirrors s9b) -----
+model:
+  encoder:
+    hidden_mv_channels: 16
+    hidden_s_channels: 64
+    num_blocks: 4
+    out_mv_channels: 1
+    out_s_channels: 64
+    dropout: 0.2
+    mv_embedding_mode: centroid
+  aggregation:
+    type: attention_card
+    num_seeds: 2
+    num_heads: 4
+    dropout: 0.0
+  head:
+    proj_dim: 64
+    num_clusters: 3
+    temperature: 0.25
+
+# ----- Augmentation -----
+augment:
+  hit_dropout: 0.25
+
+# ----- Loss -----
+loss:
+  lambda_ce: 1.0
+  lambda_vicreg: 1.0
+  swap:
+    weight: 1.0
+    sharpen_temp: 0.25
+  vicreg:
+    var_weight: 1.0
+    cov_weight: 0.04
+    var_gamma: 1.0
+  # Mixed 30+70 unlabeled population is muon-dominated at both energies (70: 85%
+  # mu, 30: 78% mu) but 30 GeV lifts e/pi -> slightly more e/pi headroom than s9b.
+  cluster_prior: [0.03, 0.12, 0.85]   # [e, pi, mu]; null -> disabled
+  lambda_prior: 2.0
+  prior_warmup_epochs: [5, 20]
+  prior_ema: true
+  prior_ema_momentum: 0.9
+  prior_exclude_anchors: true
+  domain_align:
+    enabled: false
+    lambda: 1.0
+    warmup_epochs: [5, 15]
+    ema_momentum: 0.9
+
+# ----- Training -----
+train:
+  epochs: 100
+  batch_size: 256
+  lr: 1.0e-3
+  warmup_epochs: 20
+  warmup_start_factor: 0.01
+  weight_decay: 1.0e-3
+  device: cuda:0,1
+  num_workers: 8
+  precision: bf16-mixed
+  seed: 123
+  out_dir: results/planb_s11
+  plot_every: 5
+  plot_max_events: 3000
+  ckpt_monitor: val/heldout_anchor_acc
+  ckpt_save_top_k: 2
+  early_stop_patience: 10
+  early_stop_min_delta: 0.0
+  wandb:
+    enabled: true
+    project: gatr-clustering
+    entity: null
+    name: planb_s11_energy_mix_seed123
+    mode: online
