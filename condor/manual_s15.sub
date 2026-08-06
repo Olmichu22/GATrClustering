@@ -1,0 +1,32 @@
+# HTCondor submit para S15: mixto 30 + 70 GeV, energía como escalar global y
+# afín de geometría POR FICHERO.
+#
+#   condor_submit condor/manual_s15.sub
+#
+# Los tres h5 que consume están ya en data/manual_s15/ (hardlinks a los exports
+# del etiquetador; ver data/manual_s15/README.md).
+#
+# DATA va explícito: train.sh pone por defecto --data_path data/E70GeV_2012.h5,
+# que sobreescribiría en silencio el config y entrenaría sobre el fichero SIN
+# los anchors manuales.
+request_gpus = 2
+
+# El reader carga TODOS los hits en RAM: 202.8 M hits entre las tres fuentes
+# (67.2 M a 70 GeV + 135.5 M a 30 GeV + 0.1 M de electrones), unos 6.5 GB solo
+# en arrays de hits, mas el pico transitorio de la concatenacion. s14a movia un
+# tercio de esto y no pedia memoria explicita; aqui si.
+request_memory = 32768
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/train.sh
+
+environment = "CFG=configs/manual_s15.yml DATA=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s15/E70GeV_2012_filtered_anchors.h5 OUT=results/manual_s15 EPOCHS=15"
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s15.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s15.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s15.err
+
+queue

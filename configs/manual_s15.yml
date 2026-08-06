@@ -1,0 +1,234 @@
+# ============================================================
+# S15: MIXTO 30 + 70 GeV con energía como feature y geometría por fichero.
+#
+#   condor_submit condor/manual_s15.sub
+#
+# Sucesor de s14a (K=3, el ganador del barrido s14). Cambia TRES cosas, todas
+# bloqueantes para que el run sea interpretable, y NADA más — modelo, pooling y
+# pérdida son los de s14a, así que cualquier diferencia es atribuible a la
+# mezcla de energías y no a un cambio de arquitectura.
+#
+#  1. GEOMETRÍA POR FICHERO (`hit_affine` dentro de cada fuente). Las tres
+#     muestras NO comparten marco; medido sobre los ficheros:
+#         E70GeV_2012_filtered          z_cm = 2.8*k     k 1..50
+#         E30GeV_2012_filtered          z_cm = 2.8*k     k 0..48   (0-based)
+#         Elec70GeV_2012_thrswap_filt.  z_cm = 2.8*(k-1) k 1..48   (desfasado)
+#     Hasta ahora `data.hit_affine` era ÚNICO y global, así que toda inferencia
+#     a 30 GeV usó el afín de 70: una capa de desplazamiento y k = -1, fuera del
+#     rango del minmax. En un mixto eso sería fatal — media muestra entraría con
+#     la geometría mal calibrada y no habría forma de distinguir "no converge
+#     por la diferencia de energía" de "no converge porque 30 GeV está roto".
+#     Los tres afines de abajo mandan la primera capa física de cada fichero al
+#     mismo sitio del marco de entrenamiento (k' = 0, z = 226.5 mm).
+#
+#  2. ENERGÍA COMO FEATURE (`features.extra_event_scalars: [energy]`). A 70 GeV
+#     era una columna constante y nunca hizo falta. En el mixto sí: el pión pasa
+#     de p50 = 995 hits a 70 GeV a p50 = 469 a 30 GeV (medido), y sin energía el
+#     modelo no puede saber si un evento de 400 hits es un pión de 30 GeV o algo
+#     intermedio de 70. Es exactamente el fallo ya documentado (un modelo de
+#     70 GeV aplicado a 30 manda el 68% de los piones a muones), solo que ahora
+#     ocurriría dentro del mismo batch. Mínimo viable: escalar global concatenado
+#     a la entrada escalar de GATr (se difunde por hit en feature_routing).
+#
+#  3. SPLIT Y MÉTRICA POR (CLASE, ENERGÍA) (`data.stratify_split`). Con anchors
+#     de dos energías, estratificar solo por clase puede dejar todos los
+#     electrones held-out en una sola energía; entonces la accuracy agregada no
+#     dice nada sobre generalización entre energías, que es justo lo que este run
+#     pregunta. El entrenador loguea `val/acc_c<clase>_E<energía>` y
+#     `val/heldout_anchor_acc_worst_group` (la peor celda), además del agregado.
+#
+# Convención del etiquetador (NO es el índice de cluster):
+#   0 electron | 1 pion | 2 muon | 3 multip | 4 penetrante | 5 ruido
+# K = 3 [e, pi, mu], como s14a: s14b (K=4) y s14c (K=5) empeoraron la accuracy
+# held-out (0.720 / 0.726 frente a 0.812) y el cluster de ruido no aprendió
+# ruido. La mezcla de energías ya añade una dimensión de dificultad; no se
+# añaden clases a la vez.
+# ============================================================
+
+data:
+  # Primario: 70 GeV con los anchors manuales (pi/mu; ningún electrón, ver §3).
+  # condor/manual_s15.sub pasa esta MISMA ruta por --data_path, que si no
+  # sobreescribiría el config en silencio.
+  path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s15/E70GeV_2012_filtered_anchors.h5
+  val_ratio: 0.2
+  seed: 42
+
+  force_anchor: null        # conservar el anchor_label curado de cada fichero
+
+  # ----- afín POR DEFECTO: el del primario de 70 GeV ------------------------
+  # Cada fuente de abajo declara el suyo; este es el que se usa para el primario
+  # y como respaldo de una fuente que no lo declare. Marco destino: mm, capa
+  # 0-based, z = 28*k' + 226.5 (el de data/E70GeV_2012.h5).
+  hit_affine:
+    x: [10.0, -5.204]
+    y: [10.0, -5.204]
+    z: [10.0, 198.5]
+    k: [1.0, -1.0]
+
+  anchor_datasets:
+    # --- 30 GeV: SEGUNDO PRIMARIO, no una fuente de una sola clase -----------
+    # anchor_label: null -> no se fuerza ninguna clase, el fichero conserva su
+    # propio anchor_label (electron 90 / pion 163 / muon 197 / multip 1 /
+    # ruido 25, etiquetados a mano el 2026-08-06). Es además la ÚNICA fuente de
+    # electrones IN-DOMAIN: a 30 GeV el flag particle_type=0 no es bimodal
+    # (nHits p10/50/90 = 82/296/410) y se pudo etiquetar en la propia mezcla.
+    # Su afín es el suyo: este fichero es 0-based en k (z = 2.8*k con k desde 0).
+    - path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s15/E30GeV_2012_filtered_anchors.h5
+      anchor_label: null
+      hit_affine: {x: [10.0, -5.204], y: [10.0, -5.204], z: [10.0, 226.5], k: [1.0, 0.0]}
+
+    # --- electrones de 70 GeV del haz dedicado (224, todos electrón) ---------
+    # anchor_datasets fuerza la etiqueta sobre TODOS los eventos del fichero,
+    # por eso contiene solo los electrones confirmados. Su marco está DESFASADO
+    # una capa respecto a los otros dos (z = 2.8*(k-1)): con el afín global de
+    # s14 estos 224 anchors entraban 28 mm por delante en z para el mismo índice
+    # de capa. Aquí se corrige con su propio afín.
+    - path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s15/Elec70GeV_2012_electron_anchors.h5
+      anchor_label: 0
+      hit_affine: {x: [10.0, -5.204], y: [10.0, -5.204], z: [10.0, 226.5], k: [1.0, -1.0]}
+      max_events: null
+
+  # ----- split estratificado por clase X energía ---------------------------
+  # Sin esto, los 90 electrones de 30 GeV y los 224 de 70 se reparten al azar y
+  # la celda (electron, 70 GeV) del held-out puede quedar vacía. El reader
+  # imprime la tabla val/train por celda al arrancar: es la evidencia de que la
+  # métrica puede responder la pregunta entre energías.
+  stratify_split: [anchor, energy]
+
+  # `multip`, `penetrante` y `ruido` fuera de la CE (sus eventos siguen en el
+  # término no supervisado), igual que s14a.
+  ignore_anchor_labels: [3, 4, 5]
+  drop_ignored_anchor_events: false
+
+  field_map:
+    offsets: offsets
+    hit:
+      x: x
+      y: y
+      z: z
+      k: k
+      thr: thr
+    event:
+      energy: energy
+      anchor_label: anchor_label
+      class_label: particle_type   # solo inspección; NO es la verdad
+      nHits_total: null            # derivado de offsets
+      filter_status: filter_status
+
+  anchor_field: anchor_label
+  eval_label_field: class_label
+
+# ----- Feature routing -----
+features:
+  mv_point: [x, y, z]
+  mv_scalar: [thr]
+  scalars: []
+  thr_encoding: ordinal
+  extra_event_scalars: [energy]   # <-- el cambio 2
+
+# ----- Escalado (estadísticas ONLINE sobre el split de train) -----
+# Ruta nueva: la población cambia (2.43M eventos de dos energías), reutilizar las
+# constantes de s14a normalizaría con estadísticas de otra muestra.
+scaling:
+  source: online
+  stats_path: /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s15_stats.yml
+  features:
+    x: {mode: z_norm}
+    y: {mode: z_norm}
+    z: {mode: z_norm}
+    k: {mode: minmax}
+    thr: {mode: none}
+    # log_z y no log: la energía toma DOS valores (30 y 70). Con `log` entrarían
+    # como 3.40 y 4.25, una señal de amplitud 0.85 montada sobre un offset grande
+    # que el encoder tiene que restar; log_z los centra y los deja a ~±1, que es
+    # la escala del resto de escalares.
+    energy: {mode: log_z}
+    density: {mode: log_z}
+
+# ----- Modelo (idéntico a s14a) -----
+model:
+  encoder:
+    hidden_mv_channels: 16
+    hidden_s_channels: 64
+    num_blocks: 4
+    out_mv_channels: 1
+    out_s_channels: 64
+    dropout: 0.2
+    mv_embedding_mode: centroid
+  aggregation:
+    type: attention_density
+    num_seeds: 2
+    num_heads: 4
+    dropout: 0.0
+    separate_norm: true
+  head:
+    proj_dim: 64
+    num_clusters: 3          # [e, pi, mu]
+    temperature: 0.25
+
+augment:
+  hit_dropout: 0.25
+
+# ----- Loss -----
+loss:
+  lambda_ce: 1.0
+  lambda_vicreg: 1.0
+  swap:
+    weight: 1.0
+    sharpen_temp: 0.25
+  vicreg:
+    var_weight: 1.0
+    cov_weight: 0.04
+    var_gamma: 1.0
+
+  # Composición MEDIDA de la mezcla (833 545 ev a 70 + 1 596 273 a 30):
+  #   particle_type  -1 : 32.0%   (casi vacíos; caen con los muones)
+  #                   0 :  0.83%  (0.16% a 70 GeV, 1.18% a 30)
+  #                   1 :  6.25%  (3.65% a 70, 7.60% a 30)
+  #                   2 : 60.9%
+  # Como en s14a se le da aire al electrón por encima de su fracción medida: con
+  # lambda_prior = 2.0 un prior de 0.008 aplasta el cluster antes de que se forme,
+  # y es justo el que el run tiene que hacer emerger.
+  cluster_prior: [0.02, 0.07, 0.91]
+  lambda_prior: 2.0
+  prior_warmup_epochs: [3, 12]
+  prior_ema: true
+  prior_ema_momentum: 0.9
+  prior_exclude_anchors: true
+  domain_align:
+    enabled: false
+    lambda: 1.0
+    warmup_epochs: [5, 15]
+    ema_momentum: 0.9
+
+# ----- Entrenamiento -----
+train:
+  # 2.43M eventos por época frente a los 833k de s14a: casi 3x. 15 épocas aquí
+  # son ~36M muestras, el mismo presupuesto de pasos que las 40 de s14a (33M),
+  # así que la comparación con s14a es a igualdad de gradiente, no de épocas.
+  epochs: 15
+  batch_size: 256
+  lr: 1.0e-3
+  warmup_epochs: 3
+  warmup_start_factor: 0.01
+  weight_decay: 1.0e-3
+  device: cuda:0,1
+  num_workers: 8
+  precision: bf16-mixed
+  seed: 42
+  out_dir: results/manual_s15
+  plot_every: 1
+  plot_max_events: 3000
+  # El agregado sigue siendo el monitor por continuidad con s14; la peor celda
+  # (clase, energía) se loguea al lado y es la que hay que mirar para decidir si
+  # el mixto generaliza (val/heldout_anchor_acc_worst_group).
+  ckpt_monitor: val/heldout_anchor_acc
+  ckpt_save_top_k: 2
+  early_stop_patience: 5
+  early_stop_min_delta: 0.0
+  wandb:
+    enabled: true
+    project: gatr-clustering
+    entity: null
+    name: s15_mixed_energy
+    mode: online

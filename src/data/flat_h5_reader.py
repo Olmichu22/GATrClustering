@@ -22,6 +22,29 @@ from typing import Dict, Optional
 import numpy as np
 
 
+def apply_hit_affine(
+    hit: Dict[str, np.ndarray],
+    affine: Optional[Dict[str, object]],
+    tag: str = "",
+) -> None:
+    """In-place ``field -> scale*field + offset`` over a per-hit array dict.
+
+    Unit/origin harmonization. Lives here (and not only in the dataset) because
+    when several files are concatenated they may NOT share a frame, so the map
+    has to be applied per source BEFORE the concatenation — see
+    :class:`MultiFlatEventReader`.
+    """
+    for name, ab in (affine or {}).items():
+        if name not in hit:
+            raise KeyError(
+                f"hit_affine names '{name}', not a hit field (have: {sorted(hit)})"
+            )
+        scale, offset = (float(v) for v in ab)
+        hit[name] = (hit[name].astype(np.float32) * scale + offset).astype(np.float32)
+        where = f" [{tag}]" if tag else ""
+        print(f"[hit_affine]{where} {name} -> {scale:g}*{name} + {offset:g}")
+
+
 class FlatEventReader:
     """Load per-hit and per-event arrays from a flat h5/npz using a ``field_map``."""
 
@@ -149,6 +172,13 @@ class MultiFlatEventReader:
                        or to blank a dataset's labels (force_anchor = -1).
         max_events   : int | None -- optional reproducible random subsample cap.
         seed         : int -- RNG seed for the subsample.
+        hit_affine   : {field: [scale, offset]} | None -- unit/origin map applied
+                       to THIS source only, before concatenating. Necessary
+                       because the sources need not share a coordinate frame:
+                       the 2012 filtered files give z = 2.8*k (30 and 70 GeV)
+                       but the dedicated electron run gives z = 2.8*(k-1), one
+                       layer off. A single global affine (``data.hit_affine``)
+                       silently misplaces every hit of the odd one out.
 
     Per-hit field_map keys MUST be identical across sources. Per-event fields are
     unioned: a source missing a field is filled with ``-1`` (kept int/float by the
@@ -160,8 +190,13 @@ class MultiFlatEventReader:
             raise ValueError("MultiFlatEventReader needs at least one source")
 
         readers, keeps = [], []
+        # True when at least one source declared its own frame -> the dataset must
+        # NOT apply data.hit_affine a second time on top of the concatenation.
+        self.hit_affine_applied = any(s.get("hit_affine") for s in sources)
         for spec in sources:
             r = FlatEventReader(spec["path"], spec["field_map"])
+            apply_hit_affine(r.hit, spec.get("hit_affine"),
+                             tag=os.path.basename(spec["path"]))
             keep = np.arange(r.n_events, dtype=np.int64)
             max_events = spec.get("max_events")
             if max_events is not None and int(max_events) < r.n_events:

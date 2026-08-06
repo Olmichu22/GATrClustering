@@ -356,6 +356,7 @@ class ClusteringLitModule(L.LightningModule):
     # ------------------------------------------------------------------
     def on_validation_epoch_start(self):
         self._val_z, self._val_cluster, self._val_anchor = [], [], []
+        self._val_energy = []
         self._val_seen = 0
 
     @torch.no_grad()
@@ -400,11 +401,26 @@ class ClusteringLitModule(L.LightningModule):
                 self._val_z.append(out_a["z"][am].detach().cpu().numpy())
                 self._val_cluster.append(out_a["logits"][am].argmax(1).detach().cpu().numpy())
                 self._val_anchor.append(batch.anchor_label[am].detach().cpu().numpy())
+                self._val_energy.append(self._batch_energy(batch)[am.cpu().numpy()])
             return
         self._val_z.append(out_a["z"].detach().cpu().numpy())
         self._val_cluster.append(out_a["logits"].argmax(1).detach().cpu().numpy())
         self._val_anchor.append(batch.anchor_label.detach().cpu().numpy())
+        self._val_energy.append(self._batch_energy(batch))
         self._val_seen += out_a["z"].shape[0]
+
+    @staticmethod
+    def _batch_energy(batch) -> np.ndarray:
+        """Beam energy in GeV per event, rounded to int (0 if the field is absent).
+
+        ``energy_gev`` is the UNSCALED copy the dataset keeps precisely for this:
+        ``batch.energy`` has already been through log/log_z and would group
+        events by a scaled value that changes with the scaling config.
+        """
+        e = getattr(batch, "energy_gev", None)
+        if e is None:
+            return np.zeros(int(batch.anchor_label.shape[0]), dtype=np.int64)
+        return np.rint(e.detach().cpu().numpy().reshape(-1)).astype(np.int64)
 
     @staticmethod
     def _all_gather_np(arr: np.ndarray) -> np.ndarray:
@@ -425,12 +441,14 @@ class ClusteringLitModule(L.LightningModule):
         z = np.concatenate(self._val_z) if self._val_z else np.zeros((0, d), np.float32)
         cluster = np.concatenate(self._val_cluster) if self._val_cluster else np.zeros((0,), np.int64)
         anchor = np.concatenate(self._val_anchor) if self._val_anchor else np.zeros((0,), np.int64)
+        energy = np.concatenate(self._val_energy) if self._val_energy else np.zeros((0,), np.int64)
 
         # Gather shards across ranks so every rank sees the full val set and the
         # monitored metric is global (not a per-rank fraction).
         z = self._all_gather_np(z)
         cluster = self._all_gather_np(cluster)
         anchor = self._all_gather_np(anchor)
+        energy = self._all_gather_np(energy)
         if z.shape[0] == 0:
             return
 
@@ -446,6 +464,30 @@ class ClusteringLitModule(L.LightningModule):
             # Value is identical on every rank (full gathered set); log without
             # sync so ModelCheckpoint sees the true global metric on all ranks.
             self.log("val/heldout_anchor_acc", acc, prog_bar=True, batch_size=1, sync_dist=False)
+
+            # ----- the same accuracy, broken down by (class, energy) ----------
+            # In a mixed run the aggregate hides exactly what the run is asking:
+            # a model that nails 70 GeV and fails 30 GeV scores the same as one
+            # that is mediocre at both, because the two energies contribute
+            # different numbers of anchors. `..._worst_group` is that blind spot
+            # made into a single number: the accuracy of the WORST (class,
+            # energy) cell, i.e. what the model is actually guaranteed to do.
+            a_lab, a_clu, a_en = anchor[amask], cluster[amask], energy[amask]
+            group_accs, lines = [], []
+            for cls in np.unique(a_lab):
+                for en in np.unique(a_en[a_lab == cls]):
+                    m = (a_lab == cls) & (a_en == en)
+                    g_acc = float((a_clu[m] == a_lab[m]).mean())
+                    group_accs.append(g_acc)
+                    self.log(f"val/acc_c{int(cls)}_E{int(en)}", g_acc,
+                             batch_size=1, sync_dist=False)
+                    lines.append(f"    class {int(cls)}  {int(en):>3d} GeV : "
+                                 f"acc={g_acc:.3f}  (n={int(m.sum())})")
+            if group_accs:
+                self.log("val/heldout_anchor_acc_worst_group", float(min(group_accs)),
+                         prog_bar=True, batch_size=1, sync_dist=False)
+                if self.trainer.is_global_zero:
+                    print("\n".join(lines))
 
         # ----- latent PCA plot (rank 0 only: avoids racing on the same path) --
         if not self.trainer.is_global_zero:

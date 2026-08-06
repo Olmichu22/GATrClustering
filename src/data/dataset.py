@@ -26,7 +26,7 @@ import numpy as np
 import torch
 from torch_geometric.data import Data, Dataset
 
-from .flat_h5_reader import FlatEventReader, MultiFlatEventReader
+from .flat_h5_reader import FlatEventReader, MultiFlatEventReader, apply_hit_affine
 from .scaling import FeatureScaler
 
 
@@ -93,13 +93,11 @@ class ClusteringSDHCALDataset(Dataset):
         # any per-feature scaling, so the whole pipeline sees one convention.
         # Declared in the config on purpose: a silent geometry change is exactly
         # the kind of thing that must be visible in the run's record.
-        for name, ab in (hit_affine or {}).items():
-            if name not in self.hit:
-                raise KeyError(f"data.hit_affine names '{name}', not a hit field "
-                               f"(have: {sorted(self.hit)})")
-            scale, offset = (float(v) for v in ab)
-            self.hit[name] = (self.hit[name].astype(np.float32) * scale + offset).astype(np.float32)
-            print(f"[Dataset] hit_affine: {name} -> {scale:g}*{name} + {offset:g}")
+        # NOTE: this is the SINGLE-FRAME path (one affine for everything). When
+        # the sources do not share a frame, ``build_event_reader`` resolves an
+        # affine PER FILE and the reader has already applied it before the
+        # concatenation; in that case it passes hit_affine=None down here.
+        apply_hit_affine(self.hit, hit_affine, tag="all sources")
 
         # thr one-hot (before scaling), if thr is available
         if "thr" in self.hit:
@@ -110,6 +108,19 @@ class ClusteringSDHCALDataset(Dataset):
 
         # per-event arrays
         self.event = dict(self.reader.event)
+
+        # ---- raw beam energy, kept UNSCALED --------------------------------
+        # ``event['energy']`` is overwritten in place by apply_scaling_inplace
+        # (log / log_z), so it can no longer answer "which energy is this event?"
+        # once training starts. In a mixed 30+70 GeV run that question is needed
+        # in two places that must NOT depend on the scaling choice: the
+        # stratified split and the per-(class, energy) held-out accuracy. Keep a
+        # copy in GeV; exposed per event as ``data.energy_gev``.
+        e_raw = self.event.get("energy")
+        self._energy_raw = (
+            np.asarray(e_raw, dtype=np.float32) if e_raw is not None
+            else np.zeros(n_events_total, dtype=np.float32)
+        )
         # total nHits: derived from offsets (always correct after filtering)
         self._nhits_full = self.reader.nhits_per_event().astype(np.float32)
 
@@ -243,6 +254,11 @@ class ClusteringSDHCALDataset(Dataset):
         data.domain = torch.tensor([d_val], dtype=torch.long)
 
         data.energy = self._event_scalar("energy", real_idx, 0.0)
+        # Unscaled beam energy (GeV): grouping key for the per-(class, energy)
+        # metrics. Never a model input — `data.energy` is the scaled one.
+        data.energy_gev = torch.tensor(
+            [float(self._energy_raw[real_idx])], dtype=torch.float32
+        )
         # scaled density (see _compute_density); attention_density pooling reads
         # it instead of recomputing a raw, unnormalized ratio.
         data.density = self._event_scalar("density", real_idx, 0.0)
@@ -299,24 +315,77 @@ def build_event_reader(data_cfg: dict):
     if not anchor_datasets and force_anchor is None:
         return FlatEventReader(data_cfg["path"], field_map)
 
+    # ---- per-file frames -------------------------------------------------
+    # ``data.hit_affine`` is the DEFAULT for every source; a source may override
+    # it with its own ``hit_affine``. The moment any source does, the affine is
+    # resolved and applied per file inside the reader, and the (single-frame)
+    # path in the dataset is skipped -- see ``_dataset_hit_affine`` below.
+    global_affine = data_cfg.get("hit_affine")
+    per_file = any(ds_cfg.get("hit_affine") for ds_cfg in anchor_datasets)
+
     sources = [{
         "path": data_cfg["path"],
         "field_map": field_map,
         "force_anchor": None if force_anchor is None else int(force_anchor),
         "max_events": data_cfg.get("max_events"),
         "seed": seed,
+        "hit_affine": global_affine if per_file else None,
     }]
     for i, ds_cfg in enumerate(anchor_datasets):
         if "anchor_label" not in ds_cfg:
-            raise KeyError(f"data.anchor_datasets[{i}] must set 'anchor_label'")
+            raise KeyError(f"data.anchor_datasets[{i}] must set 'anchor_label' "
+                           "(use null to keep the file's own anchor_label)")
+        # anchor_label: null -> do NOT force a class; the file keeps its own
+        # anchor_label field. That is what makes a SECOND fully-labelled primary
+        # possible (e.g. the 30 GeV sample joining the 70 GeV one, each carrying
+        # its own manual anchors) instead of only one-class-per-file sources.
+        label = ds_cfg["anchor_label"]
         sources.append({
             "path": ds_cfg["path"],
             "field_map": ds_cfg.get("field_map") or field_map,
-            "force_anchor": int(ds_cfg["anchor_label"]),
+            "force_anchor": None if label is None else int(label),
             "max_events": ds_cfg.get("max_events"),
             "seed": int(ds_cfg.get("seed", seed)),
+            "hit_affine": (ds_cfg.get("hit_affine") or global_affine) if per_file else None,
         })
     return MultiFlatEventReader(sources, anchor_key=anchor_field)
+
+
+def _dataset_hit_affine(data_cfg: dict, reader) -> Optional[dict]:
+    """The affine the DATASET still has to apply (None if the reader did it)."""
+    if getattr(reader, "hit_affine_applied", False):
+        return None
+    return data_cfg.get("hit_affine")
+
+
+def stratified_split(
+    keys: np.ndarray,
+    val_ratio: float,
+    rng: np.random.Generator,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Split indices so that EVERY key group keeps the same val fraction.
+
+    ``keys`` is one hashable key per event (here: anchor class x beam energy).
+    With a plain global permutation, a class with ~90 anchors split across two
+    energies can easily land with all of its held-out anchors at a single energy
+    — and then the aggregate accuracy says nothing about generalizing across
+    energies, which is the whole point of a mixed run. Groups smaller than
+    ``1/val_ratio`` contribute at least one val event as long as they have >= 2.
+    """
+    val_parts, train_parts = [], []
+    for key in np.unique(keys):
+        idx = np.flatnonzero(keys == key)
+        rng.shuffle(idx)
+        n_val = int(round(idx.size * val_ratio))
+        if idx.size >= 2:
+            n_val = min(max(n_val, 1), idx.size - 1)  # never empty, never all
+        val_parts.append(idx[:n_val])
+        train_parts.append(idx[n_val:])
+    val_idx = np.concatenate(val_parts) if val_parts else np.empty(0, np.int64)
+    train_idx = np.concatenate(train_parts) if train_parts else np.empty(0, np.int64)
+    rng.shuffle(val_idx)
+    rng.shuffle(train_idx)
+    return train_idx.astype(np.int64), val_idx.astype(np.int64)
 
 
 def make_clustering_splits(
@@ -338,14 +407,65 @@ def make_clustering_splits(
         ignore_anchor_labels=data_cfg.get("ignore_anchor_labels"),
         remap_anchor_labels=data_cfg.get("remap_anchor_labels"),
         drop_ignored_anchor_events=bool(data_cfg.get("drop_ignored_anchor_events", False)),
-        hit_affine=data_cfg.get("hit_affine"),
+        hit_affine=_dataset_hit_affine(data_cfg, reader),
     )
 
     N = ds.len()
     rng = np.random.default_rng(data_cfg.get("seed", 42))
-    perm = rng.permutation(N)
-    val_size = int(N * data_cfg.get("val_ratio", 0.2))
-    val_idx, train_idx = perm[:val_size], perm[val_size:]
+    val_ratio = float(data_cfg.get("val_ratio", 0.2))
+
+    # ---- validation split -------------------------------------------------
+    # ``data.stratify_split: [anchor, energy]`` (any subset; null = old global
+    # permutation). Stratifying by anchor class ALONE is not enough in a mixed
+    # 30+70 GeV run: see stratified_split.
+    strat = data_cfg.get("stratify_split")
+    if strat:
+        strat = [str(s) for s in strat]
+        unknown = set(strat) - {"anchor", "energy"}
+        if unknown:
+            raise ValueError(f"data.stratify_split: unknown keys {sorted(unknown)}; "
+                             "valid: 'anchor', 'energy'")
+        parts = []
+        if "anchor" in strat:
+            anchor_arr = ds.event.get(ds.anchor_field)
+            parts.append(
+                np.asarray(anchor_arr)[ds._event_indices].astype(np.int64)
+                if anchor_arr is not None
+                else np.full(N, -1, dtype=np.int64)
+            )
+        if "energy" in strat:
+            # Bin to the nearest GeV: the beam energy is discrete (30 / 70), and
+            # rounding keeps a float column from exploding into N singleton keys.
+            parts.append(np.rint(ds._energy_raw[ds._event_indices]).astype(np.int64))
+        # Vectorized key encoding: np.unique(...,return_inverse) per column, then
+        # mixed-radix combination. A Python-level hash(tuple(row)) would loop over
+        # every event (millions) for no benefit.
+        keys = np.zeros(N, dtype=np.int64)
+        for col in parts:
+            codes = np.unique(col, return_inverse=True)[1].astype(np.int64)
+            keys = keys * (int(codes.max()) + 1 if codes.size else 1) + codes
+        train_idx, val_idx = stratified_split(keys, val_ratio, rng)
+
+        # Audit: anchors per (class, energy) on each side. This table is the
+        # evidence that the held-out set can answer the cross-energy question;
+        # it belongs in the run log, not in a notebook afterwards.
+        anchor_all = ds.event.get(ds.anchor_field)
+        if anchor_all is not None:
+            a = np.asarray(anchor_all)[ds._event_indices]
+            e = np.rint(ds._energy_raw[ds._event_indices]).astype(np.int64)
+            is_val = np.zeros(N, dtype=bool)
+            is_val[val_idx] = True
+            print("[Split] held-out anchors per (class, energy):")
+            for cls in sorted(set(a[a >= 0].tolist())):
+                for en in sorted(set(e[a == cls].tolist())):
+                    m = (a == cls) & (e == en)
+                    n_val = int((m & is_val).sum())
+                    print(f"          class {cls}  {en:>3d} GeV : "
+                          f"{n_val:>5d} val / {int(m.sum()) - n_val:>6d} train")
+    else:
+        perm = rng.permutation(N)
+        val_size = int(N * val_ratio)
+        val_idx, train_idx = perm[:val_size], perm[val_size:]
 
     scaler = FeatureScaler(scaling_cfg, ds._path)
     if scaler.source == "online" and scaler.needs_stats():
