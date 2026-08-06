@@ -202,6 +202,23 @@ class ClusteringLitModule(L.LightningModule):
         # Each rank iterates the full (non-distributed) loader here, so every rank
         # computes identical prototypes -> the replicas stay in sync under DDP.
         rank0 = self.trainer.is_global_zero
+
+        # ----- al REANUDAR no se reinicializa nada --------------------------
+        # on_fit_start también se ejecuta en un fit(ckpt_path=...): Lightning
+        # restaura los pesos del checkpoint, prototipos incluidos, y acto seguido
+        # este hook los machacaba con la media de los embeddings de anchors. El
+        # encoder continuaba donde estaba pero la cabeza volvía al punto de
+        # partida. Medido al reanudar s15 desde la época 5: la accuracy held-out
+        # cayó de 0.711 a 0.670. `train.reinit_prototypes_on_resume: true`
+        # recupera el comportamiento anterior si alguna vez se quiere.
+        resuming = bool(getattr(self.trainer, "ckpt_path", None))
+        force = bool(self.cfg["train"].get("reinit_prototypes_on_resume", False))
+        if resuming and not force:
+            if rank0:
+                print("[init] reanudando: se conservan los prototipos del checkpoint "
+                      "(reinit_prototypes_on_resume: true para forzar la re-init).")
+            return
+
         loader = self._train_loader
         if loader is None:
             loader = self.trainer.train_dataloader
