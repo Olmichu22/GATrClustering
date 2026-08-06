@@ -238,6 +238,7 @@ condor/*.err
 # Sesiones de etiquetado manual: los .json SÍ se versionan (son el trabajo a
 # mano, pocos KB); los exports son h5/csv derivados de 100+ MB.
 sessions/exports/
+sessions/*.json.tmp
 
 # Estado local del agente / worktrees
 .claude/
