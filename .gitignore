@@ -218,9 +218,12 @@ __marimo__/
 .streamlit/secrets.toml
 
 # ---- GATrClustering project ----
-data/
-results/
-logs/
+# Anclado a la raíz con '/': la regla suelta `data/` casaba con CUALQUIER
+# directorio llamado data, incluido src/data/ — es decir, el reader (dataset.py,
+# flat_h5_reader.py, scaling.py, feature_routing.py) nunca llegó a versionarse.
+/data/
+/results/
+/logs/
 *.h5
 *.hdf5
 *.ckpt
