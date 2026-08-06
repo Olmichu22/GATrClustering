@@ -68,7 +68,7 @@ from lightning.pytorch.loggers import WandbLogger  # noqa: E402
 from lightning.pytorch.strategies import DDPStrategy  # noqa: E402
 
 from .augment import hit_dropout  # noqa: E402
-from .data.dataset import make_clustering_splits  # noqa: E402
+from .data.dataset import DEFAULT_NUM_WORKERS, available_cpus, make_clustering_splits  # noqa: E402
 from .losses.swap_loss import swap_loss  # noqa: E402
 from .losses.vicreg import vicreg_loss  # noqa: E402
 from .losses.prior_loss import prior_kl_loss  # noqa: E402
@@ -579,7 +579,15 @@ def train(cfg: dict, resume_from: str = None):
 
     # ----- data -----
     train_ds, val_ds, _ = make_clustering_splits(cfg["data"], cfg["features"], cfg["scaling"])
-    nw = tcfg.get("num_workers", 4)
+    nw = tcfg.get("num_workers", DEFAULT_NUM_WORKERS)
+    # Un `train.num_workers` explícito manda sobre el default, pero si pide más
+    # workers que cores tiene el job solo añade cambios de contexto sobre una
+    # CPU ya saturada: se avisa en vez de corregirlo a espaldas del config.
+    n_cpu = available_cpus()
+    if nw > n_cpu:
+        print(f"[loader] AVISO: train.num_workers = {nw} con solo {n_cpu} CPU(s) "
+              f"asignada(s). Los workers se reparten un mismo core; sube "
+              f"request_cpus en el .sub de Condor (default 1).")
     train_loader = DataLoader(
         train_ds, batch_size=tcfg["batch_size"], shuffle=True,
         num_workers=nw, drop_last=True,

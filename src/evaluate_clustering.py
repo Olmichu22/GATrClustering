@@ -34,7 +34,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
-from .data.dataset import make_clustering_splits  # noqa: E402
+from .data.dataset import DEFAULT_NUM_WORKERS, make_clustering_splits  # noqa: E402
 from .models.clustering_model import ClusteringModel  # noqa: E402
 from .plots import plot_latent_pca, cluster_colors, cluster_label  # noqa: E402
 from . import projections  # noqa: E402
@@ -409,7 +409,12 @@ def evaluate(cfg, ckpt_path, out_dir, device_str, anchors_path=None,
     os.makedirs(out_dir, exist_ok=True)
 
     _, val_ds, _ = make_clustering_splits(cfg["data"], cfg["features"], cfg["scaling"])
-    loader = DataLoader(val_ds, batch_size=cfg["train"]["batch_size"], shuffle=False)
+    # Hasta ahora sin workers: la evaluación cargaba en el proceso principal,
+    # con la GPU esperando a que un solo hilo hiciera el collate de eventos de
+    # longitud variable. Toma el mismo `train.num_workers` que el entrenamiento.
+    nw = int(cfg["train"].get("num_workers", DEFAULT_NUM_WORKERS))
+    loader = DataLoader(val_ds, batch_size=cfg["train"]["batch_size"], shuffle=False,
+                        num_workers=nw, pin_memory=True, persistent_workers=nw > 0)
 
     model = ClusteringModel(cfg["model"], cfg["features"]).to(device)
     state_dict, _ = load_ckpt(ckpt_path, map_location=device)

@@ -16,7 +16,7 @@ import numpy as np
 import torch
 from torch_geometric.loader import DataLoader
 
-from src.data.dataset import make_clustering_splits
+from src.data.dataset import DEFAULT_NUM_WORKERS, make_clustering_splits
 from src.models.clustering_model import ClusteringModel
 from src.evaluate_clustering import (load_ckpt, load_class_names, plot_projection,
                                      export_latent_explorer, explorer_selection,
@@ -104,7 +104,10 @@ def main():
 
     _, val_ds, base = make_clustering_splits(cfg["data"], cfg["features"], cfg["scaling"])
     val_idx = np.asarray(val_ds.indices)
-    loader = DataLoader(val_ds, batch_size=a.batch_size, shuffle=False)
+    # Igual que en evaluate_clustering: antes cargaba en el proceso principal.
+    nw = int(cfg.get("train", {}).get("num_workers", DEFAULT_NUM_WORKERS))
+    loader = DataLoader(val_ds, batch_size=a.batch_size, shuffle=False,
+                        num_workers=nw, pin_memory=True, persistent_workers=nw > 0)
 
     model = ClusteringModel(cfg["model"], cfg["features"]).to(device)
     model.load_state_dict(state_dict)

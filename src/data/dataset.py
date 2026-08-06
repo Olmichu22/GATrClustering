@@ -20,6 +20,7 @@ Anchor classes can be left out without re-exporting the data::
 
 from __future__ import annotations
 
+import os
 from typing import Dict, Iterable, Optional, Tuple
 
 import numpy as np
@@ -28,6 +29,31 @@ from torch_geometric.data import Data, Dataset
 
 from .flat_h5_reader import FlatEventReader, MultiFlatEventReader, apply_hit_affine
 from .scaling import FeatureScaler
+
+#: Target DataLoader workers for every consumer (train / evaluate / infer).
+#: 8 is what every config under configs/ already sets explicitly, so the default
+#: no longer diverges from practice; evaluate_clustering / infer_eval used to
+#: pass nothing at all and loaded in the main process, with the GPU waiting on a
+#: single thread collating variable-length events.
+_TARGET_NUM_WORKERS = 8
+
+
+def available_cpus() -> int:
+    """CPUs this process may actually run on (respects the cgroup/affinity)."""
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
+
+
+#: The default is CAPPED by the cores the job really has. Under HTCondor that
+#: comes from `request_cpus` in the .sub, whose default is 1: measured on the
+#: s15 run (117521), `nproc` = 1 while GPU utilization fluctuated 40-91%.
+#: Spawning 8 workers on one core would only add context switching on top of the
+#: starvation, so asking for more workers than cores is never the answer -- the
+#: fix for that is `request_cpus`. An explicit `train.num_workers` in the config
+#: still wins over this default.
+DEFAULT_NUM_WORKERS = min(_TARGET_NUM_WORKERS, available_cpus())
 
 
 def _apply_filters(event: Dict[str, Optional[np.ndarray]], n_events: int, filters: dict) -> np.ndarray:
