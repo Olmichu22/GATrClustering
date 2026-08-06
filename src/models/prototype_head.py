@@ -24,16 +24,20 @@ class PrototypeHead(nn.Module):
 
     def project(self, event_embedding: torch.Tensor) -> torch.Tensor:
         """Return L2-normalized z."""
-        z = self.projector(event_embedding)
-        return F.normalize(z, dim=-1)
+        return F.normalize(self.project_raw(event_embedding), dim=-1)
+
+    def project_raw(self, event_embedding: torch.Tensor) -> torch.Tensor:
+        """Return the projection BEFORE L2 normalization (for VICReg)."""
+        return self.projector(event_embedding)
 
     def logits(self, z: torch.Tensor) -> torch.Tensor:
         c = F.normalize(self.prototypes, dim=-1)
         return z @ c.t() / self.temperature
 
     def forward(self, event_embedding: torch.Tensor):
-        z = self.project(event_embedding)
-        return z, self.logits(z)
+        z_raw = self.project_raw(event_embedding)
+        z = F.normalize(z_raw, dim=-1)
+        return z_raw, z, self.logits(z)
 
     @torch.no_grad()
     def init_prototypes_from_anchors(self, z_anchor: torch.Tensor, anchor_labels: torch.Tensor):

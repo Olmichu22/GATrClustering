@@ -16,7 +16,7 @@ from ..data.feature_routing import (
     compute_in_mv_channels,
     compute_in_s_channels,
 )
-from .aggregation import build_aggregation
+from .aggregation import AttentionDensityPooling, build_aggregation
 from .gatr_module import GATrEncoder
 from .prototype_head import PrototypeHead
 
@@ -57,9 +57,18 @@ class ClusteringModel(nn.Module):
             inp["mv_v_part"], inp["mv_s_part"], inp["scalars"], inp["batch_idx"]
         )
         tokens = self.encoder.node_tokens(mv_out, scalar_out)  # (N, token_dim)
-        return self.aggregation(tokens, inp["batch_idx"])  # (B, agg_out_dim)
+        # Per-hit layer index (k), used only by density-aware aggregation to
+        # normalize nHits by the number of active layers; ignored otherwise.
+        layer = getattr(batch, "k", None)
+        # Pre-scaled per-event density (hits/active layer), when the dataset
+        # provides it: density-aware pooling prefers it over recomputing a raw,
+        # unnormalized ratio. Other aggregations do not accept the kwarg.
+        density = getattr(batch, "density", None)
+        if density is not None and isinstance(self.aggregation, AttentionDensityPooling):
+            return self.aggregation(tokens, inp["batch_idx"], layer=layer, density=density)
+        return self.aggregation(tokens, inp["batch_idx"], layer=layer)  # (B, agg_out_dim)
 
     def forward(self, batch):
         event_emb = self.encode_event(batch)
-        z, logits = self.head(event_emb)
-        return {"event_embedding": event_emb, "z": z, "logits": logits}
+        z_raw, z, logits = self.head(event_emb)
+        return {"event_embedding": event_emb, "z_raw": z_raw, "z": z, "logits": logits}

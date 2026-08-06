@@ -1,5 +1,11 @@
 """
-VICReg variance + covariance regularization on the event embeddings z.
+VICReg variance + covariance regularization on the event projection.
+
+Applied to the projector output BEFORE L2 normalization (``z_raw``). VICReg was
+designed for unnormalized embeddings: on the L2-normalized ``z`` the per-dim std
+is capped at ~1/sqrt(d), so ``var_gamma=1`` would be unreachable and the hinge
+would fight the normalization. On ``z_raw`` a target std of ``gamma=1`` is well
+posed.
 
     variance  : hinge that keeps the per-dimension std above ``gamma`` (prevents
                 collapse of z to a point).
@@ -23,7 +29,10 @@ def vicreg_loss(
 ):
     """z: (B, d). Returns (total, var_term, cov_term)."""
     B, d = z.shape
-    std = torch.sqrt(z.var(dim=0) + eps)
+    if B < 2:
+        z0 = z.new_zeros(())
+        return z0, z0, z0
+    std = torch.sqrt(z.var(dim=0, unbiased=False) + eps)
     var_term = torch.mean(F.relu(gamma - std))
 
     zc = z - z.mean(dim=0, keepdim=True)

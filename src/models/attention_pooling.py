@@ -21,8 +21,11 @@ class AttentionPooling(nn.Module):
         self.norm_k = nn.LayerNorm(embed_dim)
         self.out_dim = num_seeds * embed_dim
 
-    def forward(self, x, batch):
-        """x: (N_total, D) tokens; batch: (N_total,) event indices. Returns (B, num_seeds*D)."""
+    def forward(self, x, batch, layer=None):
+        """x: (N_total, D) tokens; batch: (N_total,) event indices. Returns (B, num_seeds*D).
+
+        ``layer`` is accepted (and ignored) so every aggregation shares one call
+        signature; only AttentionDensityPooling actually uses it."""
         device = x.device
         counts = torch.bincount(batch)
         B = counts.shape[0]
