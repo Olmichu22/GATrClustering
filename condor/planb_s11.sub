@@ -1,0 +1,20 @@
+# HTCondor submit for PLAN B (s11): energy-scalar + 30/70 GeV mix, 2 GPUs.
+# Submit from the repo root:  condor_submit condor/planb_s11.sub
+request_gpus = 2
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/train.sh
+
+# CFG selects the plan-b config; DATA must be the PRIMARY (70 GeV unlabeled) that
+# data.path already points at (train.sh forces --data_path). The anchor_datasets
+# (30 GeV unlab + bi-energy anchors) come from the config, not DATA.
+environment = "CFG=configs/planb_s11.yml DATA=/nfs/cms/arqolmo/SDHCAL_Energy/data/filtered/planb/unlab_70.h5 OUT=results/planb_s11 EPOCHS=100"
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/planb_s11.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/planb_s11.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/planb_s11.err
+
+queue

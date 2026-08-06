@@ -1,0 +1,24 @@
+# HTCondor submit para S14c: anchors manuales sobre la muestra grande (833k),
+# `penetrante` como quinto cluster, electrones del run dedicado.
+#
+#   bash teardown_labelers.sh          # PRIMERO: escribe los h5 que esto usa
+#   condor_submit condor/manual_s14c.sub
+#
+# DATA va explícito: train.sh pone por defecto --data_path data/E70GeV_2012.h5,
+# que sobreescribiría en silencio el config y entrenaría sobre el fichero SIN
+# los anchors manuales.
+request_gpus = 2
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/train.sh
+
+environment = "CFG=configs/manual_s14c.yml DATA=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/data/manual_s14/E70GeV_2012_filtered_anchors.h5 OUT=results/manual_s14c EPOCHS=40"
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s14c.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s14c.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s14c.err
+
+queue

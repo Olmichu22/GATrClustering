@@ -1,0 +1,18 @@
+# HTCondor submit: standard eval (plots + latent_explorer.npz) of s9b on the
+# 30 GeV eval set. Single GPU. Reuses condor/eval30_full.sh with env overrides.
+# Submit from repo root:  condor_submit condor/eval30_full_s9b.sub
+request_gpus = 1
+request_cpus = 4
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/eval30_full.sh
+environment = "CKPT=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/results/sim_anchors_s9b/20260802_111209_s9b_dedicated_thrfix_seed123/checkpoints/best-epoch019-acc1.0000.ckpt CFG=configs/eval30_s9b.yml OUT=results/eval30/s9b_full"
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval30_full_s9b.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval30_full_s9b.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval30_full_s9b.err
+
+queue

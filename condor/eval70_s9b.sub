@@ -1,0 +1,16 @@
+# HTCondor submit: s9b inference on the 70 GeV in-domain training file. Single GPU.
+# Submit from repo root:  condor_submit condor/eval70_s9b.sub
+request_gpus = 1
+request_cpus = 4
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/eval70_s9b.sh
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval70_s9b.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval70_s9b.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval70_s9b.err
+
+queue

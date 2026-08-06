@@ -1,0 +1,16 @@
+# HTCondor submit: inference of s9/s10 on the 30 GeV eval set. Single GPU.
+# Submit from repo root:  condor_submit condor/eval30.sub
+request_gpus = 1
+request_cpus = 4
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/eval30.sh
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval30.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval30.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval30.err
+
+queue

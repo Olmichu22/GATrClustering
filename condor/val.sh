@@ -27,20 +27,18 @@ if [ -z "${WANDB_API_KEY:-}" ]; then
 else
     export SINGULARITYENV_WANDB_MODE="${WANDB_MODE:-online}"
 fi
-
-CFG="${CFG:-configs/sim_anchors.yml}"
-DATA="${DATA:-$REPO/data/E70GeV_2012.h5}"
+CFG="${CFG:-configs/poc.yml}"
+DATA="${DATA:-$REPO/data/E70GeV_2016.h5}"
 OUT="${OUT:-results/poc_run1}"
 EPOCHS="${EPOCHS:-500}"
 DEVICE="${DEVICE:-cuda:0}"
-
+CKPT_DIR="results/poc_run1/20260724_134729/checkpoints/"
+export SINGULARITYENV_CKPT_DIR="$CKPT_DIR"
 CMD="
 cd $REPO
 if [ -n \"\${WANDB_API_KEY:-}\" ]; then wandb login \"\$WANDB_API_KEY\" || true; fi
-python -m src.train_clustering --cfg $CFG --data_path $DATA --out_dir $OUT --epochs $EPOCHS --wandb_mode \${WANDB_MODE:-online} ${RESUME:+--resume $RESUME}
-# Lightning writes checkpoints to \$OUT/<timestamp>/checkpoints/ (unique per run so
-# nothing is overwritten). Pick the checkpoints dir of the run we just trained.
-CKPT_DIR=\$(ls -dt $OUT/*/checkpoints 2>/dev/null | head -1)
+
+
 if [ -z \"\$CKPT_DIR\" ]; then echo '[eval] no checkpoints dir found under $OUT' >&2; exit 1; fi
 # Prefer the BEST checkpoint (highest val/heldout_anchor_acc) over last.ckpt: the
 # model tends to collapse a cluster in late epochs, so last.ckpt can be far worse
@@ -52,5 +50,5 @@ python -m src.evaluate_clustering --ckpt \"\$EVAL_CKPT\" --data_path $DATA --out
 "
 
 apptainer exec --nv \
-  -B /nfs/cms/arqolmo/GPU_train/mlpf/extlib -B /nfs:/nfs -B /pnfs:/pnfs --pwd "$REPO" \
+  -B /nfs/cms/arqolmo/GPU_train/mlpf/extlib -B /nfs:/nfs --pwd "$REPO" \
   "$IMG" bash -lc "$CMD"

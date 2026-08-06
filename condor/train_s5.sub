@@ -9,11 +9,11 @@ request_gpus = 2
 +CieMediumJob = True
 requirements = TARGET.Machine == "gaew0120.ciemat.es"
 
-executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/train.sh
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/train_s5.sh
 
-output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/poc.out
-log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/poc.log
-error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/poc.err
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/poc_s5.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/poc_s5.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/poc_s5.err
 
 # Optional overrides (env passed to the executable):
 # environment = "CFG=configs/poc.yml DATA=/path/to.h5 OUT=results/poc_run1 EPOCHS=100 DEVICE=cuda:0"

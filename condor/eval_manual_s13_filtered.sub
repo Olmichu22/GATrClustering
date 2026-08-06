@@ -1,0 +1,18 @@
+# Evaluate the S13 model (hand-curated anchors, best-epoch079-acc1.0000) on the
+# FULL filtered 2012 sample (833 545 events).
+#   condor_submit condor/eval_manual_s12_filtered.sub
+request_gpus = 1
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/eval.sh
+
+environment = "CKPT=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/results/manual_s13/20260804_150603_s13_manual_anchors_multip/checkpoints/best-epoch074-acc0.9462.ckpt CFG=configs/eval_manual_s13_filtered.yml OUT=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/results/manual_s13/20260804_150603_s13_manual_anchors_multip/eval_filtered_full DEVICE=cuda:0 EXPLORER_MAX=5000"
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval_s13_filtered.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval_s13_filtered.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval_s13_filtered.err
+
+queue

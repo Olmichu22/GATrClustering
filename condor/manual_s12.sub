@@ -1,0 +1,21 @@
+# HTCondor submit for S12: first run on HAND-CURATED anchors (configs/manual_s12.yml).
+# Submit from the repo root:  condor_submit condor/manual_s12.sub
+#
+# DATA must be given explicitly: train.sh defaults --data_path to
+# data/E70GeV_2012.h5, which would silently override the config and train on the
+# file WITHOUT the manual anchor_label.
+request_gpus = 2
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/train.sh
+
+environment = "CFG=configs/manual_s12.yml DATA=/nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/sessions/exports/E70GeV_2012_manualanchors_20260804-104726.h5 OUT=results/manual_s12 EPOCHS=100"
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s12.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s12.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/manual_s12.err
+
+queue

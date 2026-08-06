@@ -1,0 +1,17 @@
+# HTCondor submit for the GATrClustering POC (eval), single GPU.
+# Submit from the repo root:  condor_submit condor/val.sub
+request_gpus = 1
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/val.sh
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/poc.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/poc.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/poc.err
+
+# Optional overrides (env passed to the executable):
+# environment = "CFG=configs/poc.yml DATA=/path/to.h5 OUT=results/poc_run1 EPOCHS=100 DEVICE=cuda:0"
+environment = "RESUME=results/poc_run1/20260724_114007/checkpoints/last.ckpt"
+queue

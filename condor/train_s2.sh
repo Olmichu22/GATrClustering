@@ -28,9 +28,9 @@ else
     export SINGULARITYENV_WANDB_MODE="${WANDB_MODE:-online}"
 fi
 
-CFG="${CFG:-configs/sim_anchors.yml}"
+CFG="${CFG:-configs/sim_anchors_s2.yml}"
 DATA="${DATA:-$REPO/data/E70GeV_2012.h5}"
-OUT="${OUT:-results/poc_run1}"
+OUT="${OUT:-results/sim_anchors_s2}"
 EPOCHS="${EPOCHS:-500}"
 DEVICE="${DEVICE:-cuda:0}"
 

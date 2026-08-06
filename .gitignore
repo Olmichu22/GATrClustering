@@ -226,3 +226,24 @@ logs/
 *.ckpt
 *_stats.yml
 wandb/
+
+# condor/ SÍ se versiona (los .sub y .sh son la infraestructura reproducible),
+# pero no sus salidas.
+condor/*.out
+condor/*.err
+
+# Secreto de W&B: lo leen los condor/*.sh. NUNCA versionar.
+.wandb_key
+
+# Sesiones de etiquetado manual: los .json SÍ se versionan (son el trabajo a
+# mano, pocos KB); los exports son h5/csv derivados de 100+ MB.
+sessions/exports/
+
+# Estado local del agente / worktrees
+.claude/
+
+# latent-space explorer dumps (produced by evaluate_clustering.py)
+latent_explorer*.npz
+
+# local venv for the explorer Dash app (created by install.sh)
+.venv_viewer/

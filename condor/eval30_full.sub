@@ -1,0 +1,17 @@
+# HTCondor submit: standard eval (plots + latent_explorer.npz) of s10b on the
+# 30 GeV eval set. Single GPU. Submit from repo root:
+#   condor_submit condor/eval30_full.sub
+request_gpus = 1
+request_cpus = 4
+
++CieRunInGpu3 = True
++CieMediumJob = True
+requirements = TARGET.Machine == "gaew0120.ciemat.es"
+
+executable = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/condor/eval30_full.sh
+
+output = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval30_full.out
+log    = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval30_full.log
+error  = /nfs/cms/arqolmo/SDHCAL_Energy/GATrClustering/logs/eval30_full.err
+
+queue
